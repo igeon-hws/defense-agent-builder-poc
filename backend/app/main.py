@@ -11,9 +11,18 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from langgraph.types import Command
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+from .gateway import ModelGateway, ModelGatewayError
+from .runtime import LangGraphRuntime
+
+load_dotenv(Path(__file__).parents[2] / ".env")
 
 DB_PATH = Path(os.getenv("DEMO_DB_PATH", Path(__file__).parents[1] / "demo.db"))
+RUNTIME = LangGraphRuntime(DB_PATH.with_name("checkpoints.db"))
+GATEWAY = ModelGateway()
 
 
 def now() -> str:
@@ -38,18 +47,15 @@ def db():
 
 ANALYST_NODES = [
     ("sensor", "감시 센서 이벤트", "trigger"), ("filter", "이벤트 조건 확인", "control"),
-    ("context", "작전 상황 조회", "data"), ("search", "과거 관측자료 검색", "data"),
-    ("threat", "위협 수준 분석", "ai"), ("condition", "위협 수준 분기", "control"),
-    ("record", "관측 기록 저장", "action"), ("notify", "상황 알림", "action"),
+    ("context", "작전 정보 조회", "data"), ("threat", "위협 수준 분석", "ai"),
     ("generator", "지역 분석보고서 작성", "action"), ("approval", "분석관 검토·승인", "control"),
-    ("send", "지역 보고서 확정", "action"), ("board", "상황판 반영", "action"),
+    ("send", "지역 보고서 확정", "action"),
 ]
 STAFF_NODES = [
     ("report_trigger", "승인 지역보고 접수", "trigger"), ("reports", "승인 지역보고 수집", "data"),
-    ("context", "접경지역 작전상황 조회", "data"), ("search", "관련 정보 조회", "data"),
-    ("synthesis", "접경지역 위협 종합", "ai"), ("notify", "참모 상황 알림", "action"),
+    ("context", "접경지역 작전상황 조회", "data"), ("synthesis", "접경지역 위협 종합", "ai"),
     ("generator", "지휘관 상황보고 작성", "action"), ("approval", "참모 검토·승인", "control"),
-    ("send", "지휘관 보고서 확정", "action"), ("board", "상황판 반영", "action"),
+    ("send", "지휘관 보고서 확정", "action"),
 ]
 
 
@@ -64,7 +70,7 @@ def graph(role: str) -> dict[str, Any]:
     edges = [{"id": f"e-{i}", "source": source[i][0], "target": source[i+1][0]}
              for i in range(len(source)-1)]
     return {"schema_version": "1", "nodes": nodes, "edges": edges,
-            "model": {"provider": "deterministic", "model_id": "demo-structured-v1", "temperature": 0.2}}
+            "model": {"provider": "openai", "model_id": GATEWAY.model, "temperature": 0.2}}
 
 
 def init_db():
@@ -73,6 +79,8 @@ def init_db():
         c.executescript("""
         CREATE TABLE IF NOT EXISTS agents(id TEXT PRIMARY KEY, name TEXT, role TEXT, area TEXT, owner TEXT,
           lifecycle TEXT, version INTEGER, definition TEXT, updated_at TEXT);
+        CREATE TABLE IF NOT EXISTS agent_versions(agent_id TEXT, version INTEGER, definition TEXT, published_at TEXT,
+          PRIMARY KEY(agent_id,version));
         CREATE TABLE IF NOT EXISTS executions(id TEXT PRIMARY KEY, agent_id TEXT, agent_name TEXT, role TEXT,
           area TEXT, version INTEGER, status TEXT, trigger_type TEXT, trigger TEXT, snapshot TEXT,
           initiating_context TEXT, source_report_id TEXT, child_execution_id TEXT, created_at TEXT, updated_at TEXT);
@@ -87,6 +95,8 @@ def init_db():
           child_execution_id TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS notifications(id TEXT PRIMARY KEY, role TEXT, title TEXT, body TEXT,
           execution_id TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS sensor_events(id TEXT PRIMARY KEY, sensor_id TEXT, type TEXT, area TEXT,
+          object_count INTEGER, confidence REAL, execution_id TEXT, created_at TEXT);
         """)
         if not c.execute("SELECT 1 FROM agents").fetchone():
             for agent_id, name, role, area, owner in [
@@ -95,6 +105,8 @@ def init_db():
             ]:
                 c.execute("INSERT INTO agents VALUES(?,?,?,?,?,?,?,?,?)", (agent_id, name, role, area, owner,
                           "PUBLISHED", 1, json.dumps(graph(role), ensure_ascii=False), now()))
+                c.execute("INSERT OR IGNORE INTO agent_versions VALUES(?,?,?,?)",
+                          (agent_id, 1, json.dumps(graph(role), ensure_ascii=False), now()))
         if not c.execute("SELECT 1 FROM reports WHERE fixture=1").fetchone():
             for rid, area, threat, content in [
                 ("RPT-B07-SEED", "경기도 연천군", "MEDIUM", "연천군 북부에서 반복 이동 징후가 식별되었습니다."),
@@ -110,13 +122,13 @@ def init_db():
         ]:
             saved = c.execute("SELECT definition FROM agents WHERE id=?", (agent_id,)).fetchone()
             if saved:
-                definition = json.loads(saved["definition"])
-                labels = {node_id: label for node_id, label, _ in (ANALYST_NODES if role == "ANALYST" else STAFF_NODES)}
-                for node in definition.get("nodes", []):
-                    if node.get("id") in labels:
-                        node["label"] = labels[node["id"]]
+                definition = graph(role)
                 c.execute("UPDATE agents SET name=?,area=?,owner=?,definition=? WHERE id=?",
                           (name, area, owner, json.dumps(definition, ensure_ascii=False), agent_id))
+                current=c.execute("SELECT version,lifecycle FROM agents WHERE id=?",(agent_id,)).fetchone()
+                if current and current["lifecycle"]=="PUBLISHED":
+                    c.execute("INSERT OR IGNORE INTO agent_versions VALUES(?,?,?,?)",
+                              (agent_id,current["version"],json.dumps(definition,ensure_ascii=False),now()))
         c.execute("UPDATE reports SET area='경기도 연천군',title='연천군 위협분석 보고',content='연천군 북부에서 반복 이동 징후가 식별되었습니다.' WHERE id='RPT-B07-SEED'")
         c.execute("UPDATE reports SET area='강원특별자치도 철원군',title='철원군 위협분석 보고',content='철원군 일대는 특이 동향 없이 안정적입니다.' WHERE id='RPT-C03-SEED'")
         c.execute("UPDATE reports SET area='경기도 파주시',title=replace(title,'A-12 지역','파주시') WHERE area='A-12'")
@@ -153,45 +165,65 @@ def trace(c, eid, node_id, label, status="SUCCEEDED", inp="", out=""):
               (eid,node_id,label,status,inp,out,t,t if status != "WAITING" else None))
 
 
-def run_until_approval(c, execution: dict, role: str):
-    eid = execution["id"]
-    definition = execution.get("definition", {})
-    configured = definition.get("nodes", [])
-    by_id = {n["id"]: n for n in configured}
-    outgoing: dict[str, list[str]] = {node_id: [] for node_id in by_id}
-    incoming = {node_id: 0 for node_id in by_id}
-    for edge in definition.get("edges", []):
-        if edge.get("source") in outgoing and edge.get("target") in incoming:
-            outgoing[edge["source"]].append(edge["target"]); incoming[edge["target"]] += 1
-    ordered_ids=[]; queue=[node_id for node_id,count in incoming.items() if count == 0]
-    while queue:
-        node_id=queue.pop(0); ordered_ids.append(node_id)
-        for target in outgoing.get(node_id, []):
-            incoming[target] -= 1
-            if incoming[target] == 0: queue.append(target)
-    source = ([(node_id, by_id[node_id].get("label", node_id), by_id[node_id].get("group", "action")) for node_id in ordered_ids]
-              if ordered_ids else (ANALYST_NODES if role == "ANALYST" else STAFF_NODES))
-    approval_index = next(i for i,n in enumerate(source) if n[0] == "approval")
-    for node_id, label, _ in source[:approval_index]:
-        output = ""
-        if node_id == "filter": output = "경기도 파주시 / 신뢰도 0.94 통과"
-        elif node_id in ("search","context"): output = "Mock evidence 3건 조회"
-        elif node_id == "threat": output = "HIGH · 복수 이동체 접근 징후"
-        elif node_id == "reports": output = "파주·연천·철원 승인 보고서 수집"
-        elif node_id == "synthesis": output = "종합 위협 높음 · 파주 우선 대응"
-        trace(c,eid,node_id,label,out=output)
-    draft = ("경기도 파주시 북부에서 신뢰도 0.94의 복수 이동체가 탐지되었습니다. 과거 관측 3건과 연계되어 "
-             "위협 수준을 HIGH로 평가하며 경계 강화를 권고합니다." if role == "ANALYST" else
-             "파주시의 신규 고위협 징후와 연천군·철원군 승인 보고를 종합했습니다. 접경지역 위협 수준은 HIGH이며 "
-             "파주 감시 자산 증강과 연천 연계 추적을 권고합니다.")
-    aid = uid("APR")
-    trace(c,eid,"approval",source[approval_index][1],"WAITING",out="명시적 승인 대기")
-    c.execute("INSERT INTO approvals VALUES(?,?,?,?,?,?,?,?,?,?)",
-              (aid,eid,role,"PENDING",draft,draft,None,None,None,None))
-    status = f"WAITING_FOR_{role}_APPROVAL"
-    c.execute("UPDATE executions SET status=?,updated_at=? WHERE id=?",(status,now(),eid))
-    c.execute("INSERT INTO notifications VALUES(?,?,?,?,?,?)",(uid("NTF"),role,f"{role.title()} 검토 필요",
-              "보고서 초안이 승인을 기다리고 있습니다.",eid,now()))
+def invoke_workflow(c, eid: str, agent: dict, trigger_payload: dict, resume: dict | None = None):
+    definition = agent["definition"] if isinstance(agent["definition"], dict) else json.loads(agent["definition"])
+    role = agent["role"]
+    default_draft = "분석 결과를 기다리고 있습니다."
+
+    def runner(spec, state, phase):
+        node_id=spec["id"]; capability=spec.get("type",node_id); label=spec.get("label",node_id)
+        if phase == "before_interrupt":
+            existing=row(c.execute("SELECT * FROM approvals WHERE execution_id=?",(eid,)).fetchone())
+            if not existing:
+                approval_id=uid("APR")
+                draft=state.get("draft",default_draft)
+                c.execute("INSERT INTO approvals VALUES(?,?,?,?,?,?,?,?,?,?)",
+                          (approval_id,eid,role,"PENDING",draft,draft,None,None,None,None))
+                trace(c,eid,node_id,label,"WAITING",out="명시적 승인 대기")
+                c.execute("UPDATE executions SET status=?,updated_at=? WHERE id=?",
+                          (f"WAITING_FOR_{role}_APPROVAL",now(),eid))
+                c.execute("INSERT INTO notifications VALUES(?,?,?,?,?,?)",(uid("NTF"),role,f"{role.title()} 검토 필요",
+                          "보고서 초안이 승인을 기다리고 있습니다.",eid,now()))
+                c.commit(); existing={"id":approval_id,"draft":draft}
+            return {"approval_id":existing["id"],"reviewer_role":role,"draft":existing["draft"]}
+        if phase == "after_interrupt":
+            decision=state.get("approval_decision","APPROVE")
+            c.execute("UPDATE trace SET status=?,ended_at=?,output_summary=? WHERE execution_id=? AND node_id=?",
+                      ("FAILED" if decision=="REJECT" else "SUCCEEDED",now(),decision,eid,node_id))
+            c.commit()
+            return {"approval_decision":decision,"draft":state.get("edited_content") or state.get("draft",default_draft)}
+        output=""
+        updates={}
+        if capability=="filter":
+            event=state.get("event",{}); output=f"{event.get('area')} / 신뢰도 {event.get('confidence')} 통과"
+        elif capability=="context": output="파주시 작전 정보와 관측 근거 2건 조회"; updates["evidence_ids"]=["OBS-PJU-017","CTX-PJU-003"]
+        elif capability=="threat":
+            result=GATEWAY.structured(name="threat_analysis",
+                instructions="대한민국 접경지역 센서 이벤트를 분석한다. 입력 규모와 신뢰도를 반영해 위협 수준과 짧은 한국어 요약을 작성한다. 제공된 evidence_ids만 인용한다.",
+                payload={"event":state.get("event",{}),"evidence_ids":state.get("evidence_ids",[])},
+                schema={"type":"object","properties":{"threat_level":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},"summary":{"type":"string"},"evidence_ids":{"type":"array","items":{"type":"string"}}},"required":["threat_level","summary","evidence_ids"],"additionalProperties":False})
+            output=f"{result['threat_level']} · {result['summary']}"; updates.update(result)
+        elif capability=="reports": output="파주·연천·철원 승인 보고서 수집"; updates["source_report_ids"]=["파주 신규보고","RPT-B07-SEED","RPT-C03-SEED"]
+        elif capability=="synthesis":
+            result=GATEWAY.structured(name="situation_synthesis",
+                instructions="승인된 접경지역 보고를 종합해 지휘관에게 보고할 짧은 한국어 상황 요약을 작성한다.",
+                payload={"source_report_ids":state.get("source_report_ids",[])},
+                schema={"type":"object","properties":{"overall_threat_level":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},"summary":{"type":"string"},"priority_areas":{"type":"array","items":{"type":"string"}},"source_report_ids":{"type":"array","items":{"type":"string"}}},"required":["overall_threat_level","summary","priority_areas","source_report_ids"],"additionalProperties":False})
+            output=f"{result['overall_threat_level']} · {result['summary']}"; updates.update(result); updates["threat_level"]=result["overall_threat_level"]
+        elif capability=="generator":
+            level=state.get("threat_level","미정"); summary=state.get("summary",default_draft)
+            draft=f"[{agent['area']} 상황 보고]\n위협 수준: {level}\n\n{summary}\n\n권고: 관련 감시 자산을 유지하고 승인된 절차에 따라 후속 조치하십시오."
+            output="LLM 분석 기반 승인용 보고서 초안 생성"; updates["draft"]=draft
+        else: output=f"{label} 처리 완료"
+        trace(c,eid,node_id,label,out=output); c.commit()
+        return updates
+
+    compiled=RUNTIME.compile(definition,runner)
+    config=RUNTIME.config(eid)
+    if resume is None:
+        initial={"execution_id":eid,"role":role,"area":agent["area"],"event":trigger_payload,"draft":default_draft}
+        return compiled.invoke(initial,config=config)
+    return compiled.invoke(Command(resume=resume),config=config)
 
 
 def create_execution(c, agent, trigger_payload, initiating, source_report_id=None):
@@ -200,7 +232,12 @@ def create_execution(c, agent, trigger_payload, initiating, source_report_id=Non
     c.execute("INSERT INTO executions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(eid,agent["id"],agent["name"],agent["role"],
               agent["area"],agent["version"],"RUNNING","SENSOR_EVENT" if agent["role"]=="ANALYST" else "APPROVED_REPORT",
               json.dumps(trigger_payload,ensure_ascii=False),snap,json.dumps(initiating),source_report_id,None,now(),now()))
-    run_until_approval(c,{"id":eid,"definition":json.loads(snap)},agent["role"])
+    c.commit()
+    try:
+        invoke_workflow(c,eid,{**agent,"definition":json.loads(snap)},trigger_payload)
+    except ModelGatewayError as exc:
+        trace(c,eid,"model_gateway","외부 LLM 호출","FAILED",out=str(exc))
+        c.execute("UPDATE executions SET status='FAILED',updated_at=? WHERE id=?",(now(),eid))
     return eid
 
 
@@ -215,11 +252,23 @@ def startup(): init_db()
 
 class SessionIn(BaseModel): role: Literal["ANALYST","STAFF","COMMANDER"]
 class AgentIn(BaseModel): definition: dict[str, Any]
+class AgentCreateIn(BaseModel):
+    name: str
+    description: str = ""
+    role: Literal["ANALYST","STAFF"]
+    area: str
+    template: Literal["BLANK","ANALYST","STAFF"] = "BLANK"
 class DecisionIn(BaseModel): decision: Literal["APPROVE","EDIT_APPROVE","REJECT"]; content: str | None = None; comment: str | None = None
+class SensorEventIn(BaseModel):
+    sensor_id: str = "파주-감시센서-03"
+    type: str = "이동체 감지"
+    area: str = "경기도 파주시"
+    object_count: int
+    confidence: float
 
 
 @app.get("/api/health")
-def health(): return {"status":"ok","mode":"DETERMINISTIC_REHEARSAL","database":str(DB_PATH)}
+def health(): return {"status":"ok",**GATEWAY.status(),"database":str(DB_PATH)}
 
 @app.post("/api/session")
 def set_session(body: SessionIn): return session_for(body.role)
@@ -234,6 +283,21 @@ def agents(role: str):
     if role == "COMMANDER": return []
     with db() as c: return [row(r) for r in c.execute("SELECT * FROM agents WHERE role=? ORDER BY name",(role,))]
 
+@app.post("/api/agents")
+def create_agent(body: AgentCreateIn, x_demo_role: str = Header(...)):
+    require_role(body.role, x_demo_role)
+    agent_id=uid("AGT").lower()
+    definition=graph(body.role) if body.template == body.role else {
+        "schema_version":"1", "description":body.description, "nodes":[], "edges":[],
+        "model":{"provider":"openai","model_id":GATEWAY.model,"temperature":0.2},
+    }
+    definition["description"]=body.description
+    owner=session_for(body.role)["user_id"]
+    with db() as c:
+        c.execute("INSERT INTO agents VALUES(?,?,?,?,?,?,?,?,?)",(agent_id,body.name,body.role,body.area,owner,
+                  "DRAFT",0,json.dumps(definition,ensure_ascii=False),now()))
+    return {"id":agent_id,"lifecycle":"DRAFT","version":0}
+
 @app.get("/api/agents/{agent_id}")
 def get_agent(agent_id: str):
     with db() as c:
@@ -243,8 +307,6 @@ def get_agent(agent_id: str):
 
 @app.put("/api/agents/{agent_id}")
 def save_agent(agent_id: str, body: AgentIn):
-    errors=validate_definition(body.definition)
-    if errors: raise HTTPException(422,{"errors":errors})
     with db() as c:
         if not c.execute("SELECT 1 FROM agents WHERE id=?",(agent_id,)).fetchone(): raise HTTPException(404,"Agent 없음")
         c.execute("UPDATE agents SET definition=?,lifecycle='DRAFT',updated_at=? WHERE id=?",
@@ -257,18 +319,20 @@ def validate_definition(d):
     if not nodes: errors.append("워크플로에 노드가 필요합니다.")
     if any(e.get("source") not in ids or e.get("target") not in ids for e in edges): errors.append("연결되지 않은 edge endpoint가 있습니다.")
     if not any("approval" in (n.get("type","")+n.get("id","")) for n in nodes): errors.append("Human Approval 노드가 필요합니다.")
-    if not any(n.get("id")=="send" for n in nodes): errors.append("Send Report 노드가 필요합니다.")
+    send_ids={n.get("id") for n in nodes if "send" in (n.get("type","")+n.get("id",""))}
+    if not send_ids: errors.append("Send Report 노드가 필요합니다.")
     if nodes and edges:
         incoming={node_id:0 for node_id in ids}; outgoing={node_id:[] for node_id in ids}
         for edge in edges:
             if edge.get("source") in outgoing and edge.get("target") in incoming:
                 outgoing[edge["source"]].append(edge["target"]); incoming[edge["target"]]+=1
         starts=[node_id for node_id,count in incoming.items() if count==0]
+        if len(starts)!=1: errors.append("연결된 시작 노드는 정확히 하나여야 합니다.")
         reachable=set(starts); stack=list(starts)
         while stack:
             for target in outgoing.get(stack.pop(),[]):
                 if target not in reachable: reachable.add(target); stack.append(target)
-        if "send" not in reachable: errors.append("시작 노드에서 보고서 확정 노드까지 연결해야 합니다.")
+        if send_ids and not send_ids.intersection(reachable): errors.append("시작 노드에서 보고서 확정 노드까지 연결해야 합니다.")
         approval_ids={n.get("id") for n in nodes if "approval" in (n.get("type","")+n.get("id",""))}
         if not approval_ids.intersection(reachable): errors.append("승인 노드가 실행 경로에 연결되어야 합니다.")
     return errors
@@ -284,6 +348,8 @@ def publish(agent_id: str):
         errors=validate_definition(a["definition"])
         if errors: raise HTTPException(422,{"errors":errors})
         version=a["version"]+1 if a["lifecycle"]=="DRAFT" else a["version"]
+        c.execute("INSERT OR IGNORE INTO agent_versions VALUES(?,?,?,?)",
+                  (agent_id,version,json.dumps(a["definition"],ensure_ascii=False),now()))
         c.execute("UPDATE agents SET lifecycle='PUBLISHED',version=?,updated_at=? WHERE id=?",(version,now(),agent_id))
         return {"published":True,"version":version}
 
@@ -293,9 +359,26 @@ def test_agent(agent_id: str, x_demo_role: str = Header(default="ANALYST")):
         a=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
         if not a: raise HTTPException(404,"Agent 없음")
         require_role(a["role"],x_demo_role)
+        errors=validate_definition(a["definition"])
+        if errors: raise HTTPException(422,{"errors":errors})
         fixture={"sensor_id":"파주-감시센서-03","type":"이동체 감지","area":"경기도 파주시","object_count":4,"confidence":0.94}
         eid=create_execution(c,a,fixture,session_for(x_demo_role))
         return {"execution_id":eid}
+
+@app.post("/api/sensor-events")
+def sensor_event(body: SensorEventIn, x_demo_role: str = Header(default="ANALYST")):
+    require_role("ANALYST",x_demo_role)
+    if not 1 <= body.object_count <= 12: raise HTTPException(422,"탐지 개체 수는 1~12 범위여야 합니다.")
+    if not .5 <= body.confidence <= .99: raise HTTPException(422,"신뢰도는 0.50~0.99 범위여야 합니다.")
+    if body.area != "경기도 파주시": raise HTTPException(422,"이 데모 센서는 경기도 파주시만 지원합니다.")
+    with db() as c:
+        agent=row(c.execute("SELECT * FROM agents WHERE role='ANALYST' AND area=? AND lifecycle='PUBLISHED' ORDER BY updated_at DESC LIMIT 1",(body.area,)).fetchone())
+        if not agent: raise HTTPException(409,"게시된 파주시 분석 에이전트가 없습니다.")
+        payload=body.model_dump(); event_id=uid("SNS"); payload["event_id"]=event_id
+        eid=create_execution(c,agent,payload,session_for("ANALYST"))
+        c.execute("INSERT INTO sensor_events VALUES(?,?,?,?,?,?,?,?)",(event_id,body.sensor_id,body.type,body.area,body.object_count,body.confidence,eid,now()))
+        status=c.execute("SELECT status FROM executions WHERE id=?",(eid,)).fetchone()[0]
+        return {"event_id":event_id,"execution_id":eid,"status":status}
 
 @app.get("/api/executions")
 def executions(role: str):
@@ -329,20 +412,25 @@ def decision(approval_id: str, body: DecisionIn, x_demo_role: str = Header(...))
         c.execute("UPDATE approvals SET status=?,decision=?,actor=?,comment=?,draft=?,decided_at=? WHERE id=?",
                   ("REJECTED" if body.decision=="REJECT" else "APPROVED",body.decision,actor,body.comment,content,now(),approval_id))
         eid=a["execution_id"]
-        c.execute("UPDATE trace SET status=?,ended_at=?,output_summary=? WHERE execution_id=? AND node_id='approval'",
-                  ("FAILED" if body.decision=="REJECT" else "SUCCEEDED",now(),body.decision,eid))
-        if body.decision=="REJECT":
-            c.execute("UPDATE executions SET status='REJECTED',updated_at=? WHERE id=?",(now(),eid)); return {"status":"REJECTED"}
         e=row(c.execute("SELECT * FROM executions WHERE id=?",(eid,)).fetchone())
+        agent={"id":e["agent_id"],"name":e["agent_name"],"role":e["role"],"area":e["area"],
+               "version":e["version"],"definition":e["snapshot"]}
+        c.commit()
+        if body.decision=="REJECT":
+            invoke_workflow(c,eid,agent,e["trigger"],{"approval_decision":"REJECT","edited_content":content})
+            c.execute("UPDATE executions SET status='REJECTED',updated_at=? WHERE id=?",(now(),eid)); return {"status":"REJECTED"}
+        c.execute("UPDATE executions SET status='RUNNING',updated_at=? WHERE id=?",(now(),eid)); c.commit()
+        invoke_workflow(c,eid,agent,e["trigger"],{"approval_decision":body.decision,"edited_content":content})
         report_id=uid("RPT")
         kind="REGIONAL" if e["role"]=="ANALYST" else "COMMANDER"
         source_ids=[]
         if kind=="COMMANDER":
             source_ids=[r["id"] for r in c.execute("SELECT id FROM reports WHERE kind='REGIONAL' ORDER BY approved_at DESC LIMIT 3")]
+        ai_node="threat" if kind=="REGIONAL" else "synthesis"
+        ai_trace=c.execute("SELECT output_summary FROM trace WHERE execution_id=? AND node_id=? AND status='SUCCEEDED' ORDER BY id DESC LIMIT 1",(eid,ai_node)).fetchone()
+        threat=(ai_trace["output_summary"].split(" · ",1)[0] if ai_trace and ai_trace["output_summary"] else "MEDIUM")
         c.execute("INSERT OR IGNORE INTO reports VALUES(?,?,?,?,?,?,?,?,?,?,0)",(report_id,kind,
-                  "파주시 위협분석 보고" if kind=="REGIONAL" else "접경지역 종합상황 보고",e["area"],"HIGH",content,eid,actor,now(),json.dumps(source_ids)))
-        trace(c,eid,"send","Send Report",out=f"{report_id} 저장")
-        trace(c,eid,"board","Update Situation Board",out="승인 보고 반영")
+                  "파주시 위협분석 보고" if kind=="REGIONAL" else "접경지역 종합상황 보고",e["area"],threat,content,eid,actor,now(),json.dumps(source_ids)))
         c.execute("UPDATE executions SET status='COMPLETED',updated_at=? WHERE id=?",(now(),eid))
         child=None
         if kind=="REGIONAL":

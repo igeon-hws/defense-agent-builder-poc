@@ -18,7 +18,7 @@ Required stack: React + TypeScript + React Flow frontend; FastAPI + LangGraph + 
 
 | Role | Available experience | Review responsibility |
 | --- | --- | --- |
-| ANALYST | A-12 sensor events, Threat Analysis, own agents, regional context and reports | Analyst report approval |
+| ANALYST | 경기도 파주시 sensor events, Threat Analysis, own agents, regional context and reports | Analyst report approval |
 | STAFF | Approved regional report feed, Situation Synthesis, Staff agents, multi-region context | Commander report approval |
 | COMMANDER | Read-only final Commander reports and simple Situation Board | No workflow approval or Builder editing |
 
@@ -26,14 +26,19 @@ Provide Mock Login and a persistent header Role Switch. Session fields: user_id,
 
 ## Required behavior
 
-1. Compose workflows by adding, connecting, configuring and removing business-capability nodes on React Flow. Include Analyst and Staff templates; graph edits must affect validated runtime behavior.
-2. Save Agent Definitions, validate them, test a saved snapshot, and publish a version to the Agent Registry. Show owner, role, trigger, capabilities and version. Published versions are immutable; editing creates a draft.
-3. Simulate a sensor event, filter area/confidence, retrieve mocked context/data, call the external LLM for structured threat analysis, and route LOW to record-only or MEDIUM/HIGH to notification, report draft and Analyst HITL.
-4. Pause with LangGraph interrupt and SQLite-backed checkpoint. Approve resumes; Edit changes the draft and requires explicit approval; Reject ends without publishing a report. Persist the review decision and final edited content.
+데모의 1차 진입점은 좌측 메뉴 최하단의 **센서 입력** 화면이다. 분석관은 파주시 감시 센서의 탐지 개체 수(1~12)와 신뢰도(0.50~0.99)를 조절한 뒤 이벤트를 전송한다. 전송값은 게시된 분석 에이전트의 실제 LangGraph 실행과 외부 LLM 분석 입력으로 전달되어야 한다.
+
+노드 팔레트는 역할별 핵심 7개 노드만 제공한다. 분석관은 `감시 센서 이벤트 → 이벤트 조건 확인 → 작전 정보 조회 → 위협 수준 분석 → 지역 분석보고서 작성 → 분석관 검토·승인 → 지역 보고서 확정`, 참모는 `승인 지역보고 접수 → 승인 지역보고 수집 → 접경지역 작전상황 조회 → 접경지역 위협 종합 → 지휘관 상황보고 작성 → 참모 검토·승인 → 지휘관 보고서 확정` 흐름을 사용한다.
+
+1. Create a new role-specific Agent from the Dashboard or Agent Registry. The creation form requires name, role, monitoring area and description, then opens a blank Builder canvas.
+2. Compose workflows by adding, connecting, configuring and removing business-capability nodes on React Flow. Include Analyst and Staff templates as optional starting points; graph edits and edge topology must affect validated LangGraph runtime behavior.
+3. Save Agent Definitions as drafts, validate them, test a saved draft snapshot, and publish an immutable version to the Agent Registry. Show owner, role, trigger, capabilities and version. Editing a published Agent creates or updates its draft without modifying published versions.
+4. Compile the selected saved or published definition into a real LangGraph `StateGraph`. Accept an adjustable sensor event, filter area/confidence, retrieve mocked context/data, call the configured Model Gateway, create a report draft and pause for Analyst HITL.
+5. Pause with LangGraph `interrupt()` and a SQLite-backed checkpointer. Approve resumes the same thread with `Command(resume=...)`; Edit changes the draft and requires explicit approval; Reject ends without publishing a report. Persist the review decision and final edited content.
 5. Persist the approved regional report before emitting its Approved Report event. This event starts the published Staff Agent, which combines it with seeded approved B/C reports and mocked context, performs synthesis, drafts a Commander report, and pauses for Staff HITL.
 6. Only Staff approval makes the Commander report visible in the Commander report list. Keep source report links and reviewer provenance.
 7. Show actual node execution status, input/output summaries, timing, errors and approvals inside Builder and in a dedicated Execution view. Refresh must recover waiting executions from backend state.
-8. Situation Board shows sector cards, recent events and approved reports. Notifications stay inside the application.
+8. Situation Board shows an OpenStreetMap base map for 경기도 파주시, 경기도 연천군 and 강원특별자치도 철원군 together with recent events and approved reports. Notifications stay inside the application.
 
 ## Scope boundaries
 
@@ -42,7 +47,7 @@ Provide Mock Login and a persistent header Role Switch. Session fields: user_id,
 | Implement | Builder, definition validation/compilation, Registry, external LLM + Gateway, LangGraph runtime, durable checkpoints, HITL, report persistence/event linkage, trace |
 | Mock | Login/permission data, Sensor Simulator, Data Fabric Search/Query, Situation Context, external regional report fixtures |
 | Minimal | Static role filtering, in-app notifications, report viewer, Situation Board, Commander read-only view, audit history |
-| Excluded unless explicitly requested | Kafka/message broker, Kubernetes, real GIS, real Data Fabric, real sensors, production auth, full RBAC/ABAC, local-model serving |
+| Excluded unless explicitly requested | Kafka/message broker, Kubernetes, advanced military GIS layers, real Data Fabric, real sensors, production auth, full RBAC/ABAC, local-model serving |
 
 Do not add an administrative/office workflow, real MCP integrations, separate microservices, arbitrary code nodes, or elaborate Agent deployment approval. These are future examples/platform capabilities, not requirements for this week.
 

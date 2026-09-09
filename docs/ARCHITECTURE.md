@@ -22,19 +22,23 @@ Save JSON containing schema_version, agent_id, workflow_id, name, description, o
 
 Agent versions carry version, lifecycle_status and the full definition. Minimal lifecycle: DRAFT → PUBLISHED → SUSPENDED. Publish validates and snapshots a draft; Test uses a saved snapshot, even if unpublished. Registry registration is achieved by persistence and publishing; do not build a second formal review workflow. Agent deployment approval and an execution's Human Approval are different concepts. The former is deferred; the latter is mandatory.
 
+`POST /api/agents` creates a new DRAFT with an empty canvas and role-compatible metadata. Template selection is optional and copies business JSON only. `agent_versions` stores every published snapshot under `(agent_id, version)`; publication never overwrites a previous row. Executions reference the exact saved snapshot and version used at start.
+
 Validator checks required configuration, unique IDs, valid endpoints, one supported trigger, supported node types, reachable outputs, no unsupported cycles, named LOW/MEDIUM/HIGH routing, role-compatible nodes, and a required role-specific Human Approval on every route to Send Report. Reject bypasses around approval. Compiler maps only the supported nodes to LangGraph. Canvas-only position changes do not affect execution; config and edge edits do.
 
-Published sensor/report subscriptions use active versions. Each execution pins its version/snapshot so later edits cannot change a running or paused graph. For this demo choose one active Analyst subscription for A-12 and one active Staff report subscription; avoid accidental fan-out to multiple template versions.
+The compiler performs a topological walk of Builder edges, creates one LangGraph node for every reachable business node, maps conditional edge labels to routing functions, and compiles with the shared SQLite checkpointer. Capability functions receive and return typed workflow state. The API must not emulate waiting by stopping a Python loop; the checkpoint and pending interrupt are the source of truth.
+
+Published sensor/report subscriptions use active versions. Each execution pins its version/snapshot so later edits cannot change a running or paused graph. For this demo choose one active Analyst subscription for 경기도 파주시 and one active Staff report subscription; avoid accidental fan-out to multiple template versions.
 
 ## Supported capability contracts
 
 | Group | Nodes and behavior |
 | --- | --- |
 | Trigger | Sensor Event (Analyst); Approved Report (Staff). User Request is a visible future item, disabled in this demo. Test Run injects a fixture into the supported trigger. |
-| Data | Data Fabric Search/Query and Situation Context return deterministic mocked records with stable evidence IDs; Approved Reports returns persisted, approved regional reports only. |
+| Data | 작전 정보 조회는 고정 근거 ID가 있는 모의 기록을 반환한다. 승인 지역보고 수집은 승인·저장된 지역 보고만 반환한다. |
 | AI | Threat Analysis and Situation Synthesis use structured Gateway output with evidence references; Report Generator formats a draft from that output (may use the same Gateway if needed). |
-| Control | Event Filter checks area/confidence; Condition branches on threat; Human Approval interrupts for the assigned role. |
-| Action | Record Event handles LOW/filtered cases; Notification creates an in-app alert; Send Report finalizes/persists approved content; Update Situation Board derives visible results from persisted state. |
+| Control | Event Filter checks area/confidence; Human Approval interrupts for the assigned role. |
+| Action | Report Generator formats the LLM result; Send Report finalizes and persists approved content. Situation Board reads persisted results. |
 
 Report collection and classification can share the Approved Reports node. Correlation and overall assessment belong to Situation Synthesis; do not require separate nodes for every conceptual step.
 
@@ -72,9 +76,11 @@ Minimum logical records (tables can be simplified while retaining these invarian
 
 Only approved content enters the reports collection; drafts live in runtime/approval state. Send Report commits a REGIONAL report and its pending event in one SQLite transaction. The dispatcher reads the committed report and creates the Staff execution with a uniqueness constraint on (event_id, target_agent_id, target_version). Mark dispatched only after execution creation succeeds; recover pending items on startup. Duplicate notification delivery therefore cannot create a second Staff run. Use a unique finalized report key per execution/output to guard replay.
 
-A COMMANDER report is persisted after Staff approval but must not emit APPROVED_REPORT_CREATED, preventing recursive Staff triggering. B-07 and C-03 are preapproved external seed fixtures; seeding them does not emit runtime events. Staff collects the new A-12 report plus those fixtures from a bounded demo set, deduplicated by report ID, and records the exact input IDs. A fresh A-12 report must actually participate in synthesis.
+A COMMANDER report is persisted after Staff approval but must not emit APPROVED_REPORT_CREATED, preventing recursive Staff triggering. 경기도 연천군 and 강원특별자치도 철원군 are preapproved external seed fixtures; seeding them does not emit runtime events. Staff collects the new 경기도 파주시 report plus those fixtures from a bounded demo set, deduplicated by report ID, and records the exact input IDs. A fresh 파주시 report must actually participate in synthesis.
 
 ## Model Gateway
+
+기본 실행 모드는 `openai`이며 백엔드의 `OPENAI_API_KEY`로 Responses API를 호출한다. 기본 모델은 `gpt-4.1-mini`이고 `OPENAI_MODEL`, `OPENAI_BASE_URL`로 교체할 수 있다. 위협 분석과 상황 종합은 `text.format.type=json_schema` 구조화 출력을 사용한다. `DEMO_MODEL_MODE=deterministic`은 키 없이 UI를 점검하는 명시적 리허설 모드이며 화면과 health 응답에 표시한다.
 
 Expose generate(messages, model_config) and structured_generate(messages, schema, model_config). Implement one real external provider. Reserve provider registration as the extension point for vLLM/Ollama/local HF without installing or serving them now. Keep external API credentials in backend environment configuration, never Agent Definition JSON or frontend storage.
 

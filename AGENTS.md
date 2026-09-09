@@ -47,7 +47,7 @@ When requirements are ambiguous:
 - Use React + TypeScript + React Flow for the frontend and FastAPI + LangGraph + SQLite for the backend/runtime.
 - Use an external LLM for the actual demo through a Model Gateway/provider interface. Store provider and model ID separately; keep credentials on the backend. Future local providers are an extension point, not a serving task.
 - Mock Login/Role Session supports Analyst, Staff and Commander. Apply simple role/area rules to exposed nodes, agents, data and approval actions; Commander is read-only. Role Switch must not rewrite a running execution's initiating context.
-- Mock Sensor, Data Fabric and Situation Context. Keep notifications in-app and Situation Board limited to sector cards, events and approved reports.
+- Mock Sensor, Data Fabric and Situation Context. Keep notifications in-app. The Situation Board uses an OpenStreetMap base map for the three named Korean demo regions, plus events and approved reports; advanced military GIS layers remain out of scope.
 - Builder changes must compile into actual execution. Keep business-capability JSON definitions separate from LangGraph internals and pin a definition snapshot/version for each run.
 - Implement HITL with real interrupt/checkpoint/resume. Edit requires explicit approval; Reject terminates without publishing. Never bypass approval because of a provider failure or demo timing.
 - Persist the approved regional report before its event triggers the Staff Agent. Keep report writes and event dispatch idempotent; Commander reports must not recursively trigger Staff runs.
