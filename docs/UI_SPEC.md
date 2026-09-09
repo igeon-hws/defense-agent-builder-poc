@@ -15,6 +15,7 @@ Desktop-first internal platform, optimized for a 1440×900 presentation display 
 | Execution | /executions and /executions/:id | Role/area-filtered executions |
 | Situation Board | /situation | Analyst own area; Staff/Commander all seeded areas |
 | 센서 입력 | /sensor | Analyst; 좌측 기본 메뉴의 가장 아래 |
+| 사용 매뉴얼 | /manual | 모든 역할 |
 
 센서 입력 화면은 센서 ID와 지역을 보여주고, 탐지 개체 수와 신뢰도를 슬라이더로 조절하며, 이벤트 종류를 선택할 수 있어야 한다. `센서 이벤트 전송` 후 생성된 실행 ID와 상태를 표시하고 실행 상세로 이동할 수 있어야 한다. 실제 센서 대신 사용하는 데모 입력기임을 명시한다.
 
@@ -46,7 +47,7 @@ Agent name · Draft/version       [Save] [Validate] [Publish]
 | ~200px         | flexible, largest area      | ~300px           |
 | Trigger        | Trigger → Filter → Context  | Selected node    |
 | Data/Context   |              ↓              | Config / Output  |
-| AI             |          AI → Generator     | [Apply]          |
+| AI             |       AI 분석·초안 생성      | [Apply]          |
 | Logic/Control  |              ↓              |                  |
 | Actions        |       Approval → Send       |                  |
 +----------------+-----------------------------+------------------+
@@ -65,11 +66,17 @@ Palette role exposure:
 | Data/Context | 작전 정보 조회 | 승인 지역보고 수집, 접경지역 작전상황 조회 |
 | AI | Threat Analysis | Situation Synthesis |
 | Logic/Control | Event Filter, Human Approval (Analyst) | Human Approval (Staff) |
-| Actions | Report Generator, Send Report | Report Generator, Send Report |
+| Actions | 지역 보고서 발행 | 지휘관 보고서 발행 |
 
 If displayed, User Request is disabled with '추후 지원'. Commander has no palette. Out-of-role capabilities must not be selectable; backend validation also rejects them.
 
 Config panel has Agent settings when no node is selected: name, role/goal, area, trigger, provider/model, version metadata. Node selection shows label, business description and type-specific fields:
+
+Input/Output state 계약은 캔버스를 단순하게 유지하기 위해 노드를 선택했을 때 설정 패널에만 표시한다. 실행 상세에서는 같은 노드의 실제 input_summary와 output_summary를 함께 보여 Builder 설계와 LangGraph state 변화를 대응시킬 수 있어야 한다. AI 노드는 백엔드가 허용한 모델 목록에서 모델을 선택할 수 있고, 선택값은 Agent Definition에 저장되어 실제 호출에 사용된다.
+
+지휘관의 대시보드는 완료 실행 목록을 표시하지 않는다. 지도 기반 상황판을 기본 화면으로 사용하고 최근 센서 이벤트와 지휘관 대상 알림을 함께 표시한다.
+
+분석관·참모 대시보드에서도 최근 실행 목록은 표시하지 않는다. 승인 대기가 있으면 페이지 상단에 높은 대비의 승인 요청 배너를 표시하고 헤더 종 아이콘에 대기 건수 배지를 붙인다. 배너와 종 아이콘은 실행 모니터링으로 이동한다.
 
 - Sensor/Event Filter: area 경기도 파주시, event type, minimum confidence (default 0.8).
 - Data: fixture query/filter, visible mocked-data badge, output preview.

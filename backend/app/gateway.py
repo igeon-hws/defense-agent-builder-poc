@@ -14,21 +14,27 @@ class ModelGatewayError(RuntimeError):
 class ModelGateway:
     def __init__(self) -> None:
         self.mode = os.getenv("DEMO_MODEL_MODE", "openai").lower()
-        self.model = os.getenv("OPENAI_MODEL", "gpt-5.4-nano")
+        self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+        configured = [item.strip() for item in os.getenv("OPENAI_ALLOWED_MODELS", "").split(",") if item.strip()]
+        self.allowed_models = list(dict.fromkeys([self.model, *configured, "gpt-4.1-mini", "gpt-5-mini"]))
         self.base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 
     def status(self) -> dict[str, Any]:
         return {"mode": self.mode, "provider": "openai" if self.mode == "openai" else "deterministic",
                 "model": self.model, "configured": bool(os.getenv("OPENAI_API_KEY")) if self.mode == "openai" else True}
 
-    def structured(self, *, name: str, instructions: str, payload: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+    def structured(self, *, name: str, instructions: str, payload: dict[str, Any], schema: dict[str, Any],
+                   model: str | None = None) -> dict[str, Any]:
         if self.mode == "deterministic":
             return self._deterministic(name, payload)
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ModelGatewayError("OPENAI_API_KEY가 설정되지 않았습니다.")
+        selected_model = model or self.model
+        if selected_model not in self.allowed_models:
+            raise ModelGatewayError(f"허용되지 않은 모델입니다: {selected_model}")
         request = {
-            "model": self.model,
+            "model": selected_model,
             "instructions": instructions,
             "input": json.dumps(payload, ensure_ascii=False),
             "text": {"format": {"type": "json_schema", "name": name, "strict": True, "schema": schema}},
@@ -63,6 +69,10 @@ class ModelGateway:
             event = payload.get("event", {})
             count, confidence = int(event.get("object_count", 1)), float(event.get("confidence", 0.5))
             level = "HIGH" if count >= 4 and confidence >= .85 else "MEDIUM" if count >= 2 and confidence >= .7 else "LOW"
-            return {"threat_level": level, "summary": f"이동체 {count}개, 센서 신뢰도 {confidence:.2f}를 분석했습니다.", "evidence_ids": ["OBS-PJU-017", "CTX-PJU-003"]}
-        return {"overall_threat_level": "HIGH", "summary": "파주시 신규 징후를 접경지역 최우선 대응 요소로 평가했습니다.",
-                "priority_areas": ["경기도 파주시", "경기도 연천군"], "source_report_ids": payload.get("source_report_ids", [])}
+            summary=f"이동체 {count}개, 센서 신뢰도 {confidence:.2f}를 분석했습니다."
+            return {"threat_level": level, "summary": summary, "evidence_ids": ["OBS-PJU-017", "CTX-PJU-003"],
+                    "draft": f"[파주시 지역 보고]\n위협 수준: {level}\n\n{summary}\n\n관련 감시 자산의 지속 운용을 권고합니다."}
+        summary="파주시 신규 징후를 접경지역 최우선 대응 요소로 평가했습니다."
+        return {"overall_threat_level": "HIGH", "summary": summary,
+                "priority_areas": ["경기도 파주시", "경기도 연천군"], "source_report_ids": payload.get("source_report_ids", []),
+                "draft": f"[접경지역 지휘관 보고]\n위협 수준: HIGH\n\n{summary}\n\n파주시 감시 자산 증강을 권고합니다."}

@@ -24,11 +24,15 @@ Required stack: React + TypeScript + React Flow frontend; FastAPI + LangGraph + 
 
 Provide Mock Login and a persistent header Role Switch. Session fields: user_id, role, area, permissions. Role and area determine visible agents, nodes, data and review actions through a small static policy. This demonstrates role experience; it is not production authentication or a full authorization engine.
 
+Agent Registry는 현재 세션의 사용자 ID를 기준으로 소유 에이전트만 표시한다. 분석관과 참모는 자신의 에이전트를 생성·편집·게시·삭제할 수 있으며 기본 제공 에이전트는 삭제할 수 없다. 지휘관은 Builder와 Registry에 접근하지 않고 승인된 지휘관 보고서만 열람한다. 역할 선택과 권한 설명은 사용자 화면에서 한국어로 표시한다.
+
+모든 역할이 접근할 수 있는 사용 매뉴얼 화면을 제공한다. 매뉴얼은 역할별 권한, 접근 가능한 메뉴, 사용할 수 있는 노드, 에이전트 생성부터 센서 실행·승인·보고서 확인까지의 순서를 설명한다.
+
 ## Required behavior
 
 데모의 1차 진입점은 좌측 메뉴 최하단의 **센서 입력** 화면이다. 분석관은 파주시 감시 센서의 탐지 개체 수(1~12)와 신뢰도(0.50~0.99)를 조절한 뒤 이벤트를 전송한다. 전송값은 게시된 분석 에이전트의 실제 LangGraph 실행과 외부 LLM 분석 입력으로 전달되어야 한다.
 
-노드 팔레트는 역할별 핵심 7개 노드만 제공한다. 분석관은 `감시 센서 이벤트 → 이벤트 조건 확인 → 작전 정보 조회 → 위협 수준 분석 → 지역 분석보고서 작성 → 분석관 검토·승인 → 지역 보고서 확정`, 참모는 `승인 지역보고 접수 → 승인 지역보고 수집 → 접경지역 작전상황 조회 → 접경지역 위협 종합 → 지휘관 상황보고 작성 → 참모 검토·승인 → 지휘관 보고서 확정` 흐름을 사용한다.
+노드 팔레트는 역할별 핵심 6개 노드만 제공한다. AI 노드가 판단 결과와 승인용 보고서 초안을 함께 생성한다. Action은 계산이나 문서 작성이 아니라 승인 이후 애플리케이션 상태를 변경하는 단계다. 분석관은 `감시 센서 이벤트 → 이벤트 조건 확인 → 작전 정보 조회 → 위협 분석·초안 생성 → 분석관 검토·승인 → 지역 보고서 발행`, 참모는 `승인 지역보고 접수 → 승인 지역보고 수집 → 접경지역 위협 종합·초안 생성 → 참모 검토·승인 → 지휘관 보고서 발행` 흐름을 사용한다.
 
 1. Create a new role-specific Agent from the Dashboard or Agent Registry. The creation form requires name, role, monitoring area and description, then opens a blank Builder canvas.
 2. Compose workflows by adding, connecting, configuring and removing business-capability nodes on React Flow. Include Analyst and Staff templates as optional starting points; graph edits and edge topology must affect validated LangGraph runtime behavior.

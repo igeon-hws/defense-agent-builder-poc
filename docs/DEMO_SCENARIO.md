@@ -44,7 +44,7 @@ The backend adds a unique event ID and timestamp. Mock evidence includes three r
 
 Before the main flow, demonstrate creation in under one minute: choose `새 Agent`, enter a name and area, select Blank, add the supported trigger/data/AI/approval/report nodes, connect their handles, save, validate and publish v1. Start a test from v1 and show that the execution detail uses the same pinned graph. Keep the seeded Agent available as a recovery path for the live seminar.
 
-Report Generator produces drafts before each approval. After each approval, Send Report finalizes the approved content and Situation Board reflects persisted records. 'Send' means in-app delivery. Execution view provides cross-links from the A report to the Staff run and from the Commander report to its source reports.
+Each AI node produces its role-specific draft before approval. After each approval, the publication Action persists the approved content and Situation Board reflects persisted records. Publication means in-app delivery. Execution view provides cross-links from the regional report to the Staff run and from the Commander report to its source reports.
 
 ## Branches to verify before presenting
 

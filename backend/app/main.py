@@ -47,15 +47,13 @@ def db():
 
 ANALYST_NODES = [
     ("sensor", "감시 센서 이벤트", "trigger"), ("filter", "이벤트 조건 확인", "control"),
-    ("context", "작전 정보 조회", "data"), ("threat", "위협 수준 분석", "ai"),
-    ("generator", "지역 분석보고서 작성", "action"), ("approval", "분석관 검토·승인", "control"),
-    ("send", "지역 보고서 확정", "action"),
+    ("context", "작전 정보 조회", "data"), ("threat", "위협 분석·초안 생성", "ai"),
+    ("approval", "분석관 검토·승인", "control"), ("send", "지역 보고서 발행", "action"),
 ]
 STAFF_NODES = [
     ("report_trigger", "승인 지역보고 접수", "trigger"), ("reports", "승인 지역보고 수집", "data"),
-    ("context", "접경지역 작전상황 조회", "data"), ("synthesis", "접경지역 위협 종합", "ai"),
-    ("generator", "지휘관 상황보고 작성", "action"), ("approval", "참모 검토·승인", "control"),
-    ("send", "지휘관 보고서 확정", "action"),
+    ("context", "접경지역 작전상황 조회", "data"), ("synthesis", "위협 종합·초안 생성", "ai"),
+    ("approval", "참모 검토·승인", "control"), ("send", "지휘관 보고서 발행", "action"),
 ]
 
 
@@ -65,8 +63,14 @@ def graph(role: str) -> dict[str, Any]:
     for i, (node_id, label, group) in enumerate(source):
         x = 80 + (i % 4) * 230
         y = 70 + (i // 4) * 150
+        config: dict[str, Any] = {}
+        if node_id == "filter": config = {"min_confidence": 0.8, "min_object_count": 2}
+        elif node_id == "threat": config = {"system_prompt": "대한민국 접경지역 센서 이벤트를 분석해 위협 수준, 근거 요약과 분석관 승인용 지역 보고서 초안을 한국어로 작성하세요."}
+        elif node_id == "synthesis": config = {"system_prompt": "승인된 접경지역 보고를 종합해 위협 수준, 우선 대응 지역과 참모 승인용 지휘관 보고서 초안을 한국어로 작성하세요."}
+        elif node_id == "context": config = {"query": "최근 24시간 작전 정보와 관련 관측 기록"}
+        if node_id in {"threat", "synthesis"}: config["model_id"] = GATEWAY.model
         nodes.append({"id": node_id, "type": node_id, "label": label, "group": group,
-                      "position": {"x": x, "y": y}, "config": {}})
+                      "position": {"x": x, "y": y}, "config": config})
     edges = [{"id": f"e-{i}", "source": source[i][0], "target": source[i+1][0]}
              for i in range(len(source)-1)]
     return {"schema_version": "1", "nodes": nodes, "edges": edges,
@@ -100,8 +104,8 @@ def init_db():
         """)
         if not c.execute("SELECT 1 FROM agents").fetchone():
             for agent_id, name, role, area, owner in [
-                ("analyst-a12", "파주 감시·위협분석 에이전트", "ANALYST", "경기도 파주시", "파주지역 분석관"),
-                ("staff-synthesis", "접경지역 상황종합 에이전트", "STAFF", "접경지역 전체", "정보작전 참모"),
+                ("analyst-a12", "파주 감시·위협분석 에이전트", "ANALYST", "경기도 파주시", "analyst.a12"),
+                ("staff-synthesis", "접경지역 상황종합 에이전트", "STAFF", "접경지역 전체", "staff.ops"),
             ]:
                 c.execute("INSERT INTO agents VALUES(?,?,?,?,?,?,?,?,?)", (agent_id, name, role, area, owner,
                           "PUBLISHED", 1, json.dumps(graph(role), ensure_ascii=False), now()))
@@ -117,8 +121,8 @@ def init_db():
                            "seed.system", now(), "[]"))
         # 기존 데모 DB의 구조와 사용자 설정은 유지하고 표시용 기본 데이터만 새 명칭으로 이관한다.
         for agent_id, name, area, owner, role in [
-            ("analyst-a12", "파주 감시·위협분석 에이전트", "경기도 파주시", "파주지역 분석관", "ANALYST"),
-            ("staff-synthesis", "접경지역 상황종합 에이전트", "접경지역 전체", "정보작전 참모", "STAFF"),
+            ("analyst-a12", "파주 감시·위협분석 에이전트", "경기도 파주시", "analyst.a12", "ANALYST"),
+            ("staff-synthesis", "접경지역 상황종합 에이전트", "접경지역 전체", "staff.ops", "STAFF"),
         ]:
             saved = c.execute("SELECT definition FROM agents WHERE id=?", (agent_id,)).fetchone()
             if saved:
@@ -152,11 +156,19 @@ def session_for(role: str):
     if role not in {"ANALYST", "STAFF", "COMMANDER"}: raise HTTPException(400, "지원하지 않는 역할입니다.")
     return {"user_id": {"ANALYST":"analyst.a12","STAFF":"staff.ops","COMMANDER":"commander.demo"}[role],
             "role": role, "area": "경기도 파주시" if role == "ANALYST" else "접경지역 전체",
-            "permissions": {"ANALYST":["agent:edit","review:analyst"],"STAFF":["agent:edit","review:staff"],"COMMANDER":["report:read"]}[role]}
+            "permissions": {
+                "ANALYST":["agent:create","agent:edit","agent:publish","agent:delete","sensor:emit","review:analyst"],
+                "STAFF":["agent:create","agent:edit","agent:publish","agent:delete","review:staff"],
+                "COMMANDER":["report:read","situation:read"],
+            }[role]}
 
 
 def require_role(expected: str, role: str | None):
     if role != expected: raise HTTPException(403, f"{expected} 역할만 승인할 수 있습니다.")
+
+def require_agent_owner(agent: dict[str, Any], role: str):
+    require_role(agent["role"],role)
+    if agent["owner"] != session_for(role)["user_id"]: raise HTTPException(403,"본인 소유 에이전트만 관리할 수 있습니다.")
 
 
 def trace(c, eid, node_id, label, status="SUCCEEDED", inp="", out=""):
@@ -179,11 +191,12 @@ def invoke_workflow(c, eid: str, agent: dict, trigger_payload: dict, resume: dic
                 draft=state.get("draft",default_draft)
                 c.execute("INSERT INTO approvals VALUES(?,?,?,?,?,?,?,?,?,?)",
                           (approval_id,eid,role,"PENDING",draft,draft,None,None,None,None))
-                trace(c,eid,node_id,label,"WAITING",out="명시적 승인 대기")
+                trace(c,eid,node_id,label,"WAITING",inp=f"보고서 초안 {len(draft)}자",out="명시적 승인 대기")
                 c.execute("UPDATE executions SET status=?,updated_at=? WHERE id=?",
                           (f"WAITING_FOR_{role}_APPROVAL",now(),eid))
-                c.execute("INSERT INTO notifications VALUES(?,?,?,?,?,?)",(uid("NTF"),role,f"{role.title()} 검토 필요",
-                          "보고서 초안이 승인을 기다리고 있습니다.",eid,now()))
+                reviewer="분석관" if role=="ANALYST" else "참모"
+                c.execute("INSERT INTO notifications VALUES(?,?,?,?,?,?)",(uid("NTF"),role,f"{reviewer} 승인 요청",
+                          "AI가 생성한 보고서 초안이 승인을 기다리고 있습니다.",eid,now()))
                 c.commit(); existing={"id":approval_id,"draft":draft}
             return {"approval_id":existing["id"],"reviewer_role":role,"draft":existing["draft"]}
         if phase == "after_interrupt":
@@ -194,28 +207,46 @@ def invoke_workflow(c, eid: str, agent: dict, trigger_payload: dict, resume: dic
             return {"approval_decision":decision,"draft":state.get("edited_content") or state.get("draft",default_draft)}
         output=""
         updates={}
+        config=spec.get("config",{})
+        event=state.get("event",{})
+        input_text={
+            "sensor": f"{event.get('sensor_id','센서')} · {event.get('type','이벤트')}",
+            "filter": f"신뢰도 {event.get('confidence','-')} · 탐지 {event.get('object_count','-')}개",
+            "context": f"{state.get('area',agent['area'])} · {config.get('query','작전 정보')}",
+            "threat": f"센서 이벤트 + 근거 {len(state.get('evidence_ids',[]))}건",
+            "report_trigger": f"승인 보고 {event.get('report_id','-')}",
+            "reports": f"보고 이벤트 {event.get('event_id','-')}",
+            "synthesis": f"승인 지역보고 {len(state.get('source_report_ids',[]))}건",
+            "generator": f"위협 {state.get('threat_level','-')} · 분석 요약",
+            "send": f"승인된 초안 {len(state.get('draft',''))}자",
+        }.get(capability,f"{label} state")
         if capability=="filter":
-            event=state.get("event",{}); output=f"{event.get('area')} / 신뢰도 {event.get('confidence')} 통과"
-        elif capability=="context": output="파주시 작전 정보와 관측 근거 2건 조회"; updates["evidence_ids"]=["OBS-PJU-017","CTX-PJU-003"]
+            min_conf=float(config.get("min_confidence",.8)); min_count=int(config.get("min_object_count",2))
+            passed=float(event.get("confidence",0))>=min_conf and int(event.get("object_count",0))>=min_count
+            output=(f"조건 통과 · 신뢰도 {event.get('confidence')} ≥ {min_conf}, 탐지 {event.get('object_count')} ≥ {min_count}" if passed else
+                    f"조건 미달 · 신뢰도 {event.get('confidence')} / 탐지 {event.get('object_count')}"); updates["filtered"]=not passed
+        elif capability=="context": output=f"{config.get('query','작전 정보')} · 모의 근거 2건 조회"; updates["evidence_ids"]=["OBS-PJU-017","CTX-PJU-003"]
         elif capability=="threat":
             result=GATEWAY.structured(name="threat_analysis",
-                instructions="대한민국 접경지역 센서 이벤트를 분석한다. 입력 규모와 신뢰도를 반영해 위협 수준과 짧은 한국어 요약을 작성한다. 제공된 evidence_ids만 인용한다.",
+                instructions=config.get("system_prompt","센서 이벤트를 분석해 위협 수준, 요약과 승인용 보고서 초안을 한국어로 작성하세요."),
                 payload={"event":state.get("event",{}),"evidence_ids":state.get("evidence_ids",[])},
-                schema={"type":"object","properties":{"threat_level":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},"summary":{"type":"string"},"evidence_ids":{"type":"array","items":{"type":"string"}}},"required":["threat_level","summary","evidence_ids"],"additionalProperties":False})
+                schema={"type":"object","properties":{"threat_level":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},"summary":{"type":"string"},"evidence_ids":{"type":"array","items":{"type":"string"}},"draft":{"type":"string"}},"required":["threat_level","summary","evidence_ids","draft"],"additionalProperties":False},
+                model=config.get("model_id"))
             output=f"{result['threat_level']} · {result['summary']}"; updates.update(result)
         elif capability=="reports": output="파주·연천·철원 승인 보고서 수집"; updates["source_report_ids"]=["파주 신규보고","RPT-B07-SEED","RPT-C03-SEED"]
         elif capability=="synthesis":
             result=GATEWAY.structured(name="situation_synthesis",
-                instructions="승인된 접경지역 보고를 종합해 지휘관에게 보고할 짧은 한국어 상황 요약을 작성한다.",
+                instructions=config.get("system_prompt","승인된 접경지역 보고를 종합해 위협 수준, 요약과 승인용 지휘관 보고서 초안을 한국어로 작성하세요."),
                 payload={"source_report_ids":state.get("source_report_ids",[])},
-                schema={"type":"object","properties":{"overall_threat_level":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},"summary":{"type":"string"},"priority_areas":{"type":"array","items":{"type":"string"}},"source_report_ids":{"type":"array","items":{"type":"string"}}},"required":["overall_threat_level","summary","priority_areas","source_report_ids"],"additionalProperties":False})
+                schema={"type":"object","properties":{"overall_threat_level":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},"summary":{"type":"string"},"priority_areas":{"type":"array","items":{"type":"string"}},"source_report_ids":{"type":"array","items":{"type":"string"}},"draft":{"type":"string"}},"required":["overall_threat_level","summary","priority_areas","source_report_ids","draft"],"additionalProperties":False},
+                model=config.get("model_id"))
             output=f"{result['overall_threat_level']} · {result['summary']}"; updates.update(result); updates["threat_level"]=result["overall_threat_level"]
         elif capability=="generator":
             level=state.get("threat_level","미정"); summary=state.get("summary",default_draft)
-            draft=f"[{agent['area']} 상황 보고]\n위협 수준: {level}\n\n{summary}\n\n권고: 관련 감시 자산을 유지하고 승인된 절차에 따라 후속 조치하십시오."
+            draft=f"[{agent['area']} 상황 보고]\n위협 수준: {level}\n\n{summary}\n\n권고: {config.get('recommendation','관련 감시 자산을 유지하고 승인된 절차에 따라 후속 조치하십시오.')}"
             output="LLM 분석 기반 승인용 보고서 초안 생성"; updates["draft"]=draft
         else: output=f"{label} 처리 완료"
-        trace(c,eid,node_id,label,out=output); c.commit()
+        trace(c,eid,node_id,label,inp=input_text,out=output); c.commit()
         return updates
 
     compiled=RUNTIME.compile(definition,runner)
@@ -234,7 +265,9 @@ def create_execution(c, agent, trigger_payload, initiating, source_report_id=Non
               json.dumps(trigger_payload,ensure_ascii=False),snap,json.dumps(initiating),source_report_id,None,now(),now()))
     c.commit()
     try:
-        invoke_workflow(c,eid,{**agent,"definition":json.loads(snap)},trigger_payload)
+        result=invoke_workflow(c,eid,{**agent,"definition":json.loads(snap)},trigger_payload)
+        if result.get("filtered"):
+            c.execute("UPDATE executions SET status='COMPLETED',updated_at=? WHERE id=?",(now(),eid))
     except ModelGatewayError as exc:
         trace(c,eid,"model_gateway","외부 LLM 호출","FAILED",out=str(exc))
         c.execute("UPDATE executions SET status='FAILED',updated_at=? WHERE id=?",(now(),eid))
@@ -270,18 +303,30 @@ class SensorEventIn(BaseModel):
 @app.get("/api/health")
 def health(): return {"status":"ok",**GATEWAY.status(),"database":str(DB_PATH)}
 
+@app.get("/api/models")
+def models(x_demo_role: str = Header(...)):
+    if x_demo_role not in {"ANALYST","STAFF"}: raise HTTPException(403,"에이전트 편집 권한이 없습니다.")
+    return [{"id":model,"label":model,"default":model==GATEWAY.model} for model in GATEWAY.allowed_models]
+
 @app.post("/api/session")
 def set_session(body: SessionIn): return session_for(body.role)
 
 @app.get("/api/nodes")
-def nodes(role: str):
+def nodes(role: str, x_demo_role: str = Header(...)):
+    if role != x_demo_role: raise HTTPException(403,"현재 역할에서 사용할 수 없는 노드입니다.")
     src = ANALYST_NODES if role == "ANALYST" else STAFF_NODES if role == "STAFF" else []
-    return [{"type":n,"label":l,"group":g} for n,l,g in src]
+    defaults={n["type"]:n["config"] for n in graph(role).get("nodes",[])} if src else {}
+    return [{"type":n,"label":l,"group":g,"config":defaults.get(n,{})} for n,l,g in src]
 
 @app.get("/api/agents")
-def agents(role: str):
+def agents(role: str, x_demo_role: str = Header(...)):
+    if role != x_demo_role: raise HTTPException(403,"다른 사용자의 에이전트 레지스트리에 접근할 수 없습니다.")
     if role == "COMMANDER": return []
-    with db() as c: return [row(r) for r in c.execute("SELECT * FROM agents WHERE role=? ORDER BY name",(role,))]
+    owner=session_for(role)["user_id"]
+    with db() as c:
+        result=[row(r) for r in c.execute("SELECT * FROM agents WHERE role=? AND owner=? ORDER BY name",(role,owner))]
+        for agent in result: agent["deletable"]=agent["id"] not in {"analyst-a12","staff-synthesis"}
+        return result
 
 @app.post("/api/agents")
 def create_agent(body: AgentCreateIn, x_demo_role: str = Header(...)):
@@ -298,17 +343,32 @@ def create_agent(body: AgentCreateIn, x_demo_role: str = Header(...)):
                   "DRAFT",0,json.dumps(definition,ensure_ascii=False),now()))
     return {"id":agent_id,"lifecycle":"DRAFT","version":0}
 
+@app.delete("/api/agents/{agent_id}")
+def delete_agent(agent_id: str, x_demo_role: str = Header(...)):
+    if agent_id in {"analyst-a12","staff-synthesis"}: raise HTTPException(409,"기본 제공 에이전트는 삭제할 수 없습니다.")
+    with db() as c:
+        agent=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
+        if not agent: raise HTTPException(404,"에이전트를 찾을 수 없습니다.")
+        require_role(agent["role"],x_demo_role)
+        if agent["owner"] != session_for(x_demo_role)["user_id"]: raise HTTPException(403,"본인이 만든 에이전트만 삭제할 수 있습니다.")
+        c.execute("DELETE FROM agent_versions WHERE agent_id=?",(agent_id,))
+        c.execute("DELETE FROM agents WHERE id=?",(agent_id,))
+    return {"deleted":True,"id":agent_id}
+
 @app.get("/api/agents/{agent_id}")
-def get_agent(agent_id: str):
+def get_agent(agent_id: str, x_demo_role: str = Header(...)):
     with db() as c:
         out=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
         if not out: raise HTTPException(404,"Agent를 찾을 수 없습니다.")
+        require_agent_owner(out,x_demo_role)
         return out
 
 @app.put("/api/agents/{agent_id}")
-def save_agent(agent_id: str, body: AgentIn):
+def save_agent(agent_id: str, body: AgentIn, x_demo_role: str = Header(...)):
     with db() as c:
-        if not c.execute("SELECT 1 FROM agents WHERE id=?",(agent_id,)).fetchone(): raise HTTPException(404,"Agent 없음")
+        agent=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
+        if not agent: raise HTTPException(404,"Agent 없음")
+        require_agent_owner(agent,x_demo_role)
         c.execute("UPDATE agents SET definition=?,lifecycle='DRAFT',updated_at=? WHERE id=?",
                   (json.dumps(body.definition,ensure_ascii=False),now(),agent_id))
     return {"saved":True,"lifecycle":"DRAFT"}
@@ -338,13 +398,19 @@ def validate_definition(d):
     return errors
 
 @app.post("/api/agents/{agent_id}/validate")
-def validate(agent_id: str, body: AgentIn): return {"valid":not (e:=validate_definition(body.definition)),"errors":e}
+def validate(agent_id: str, body: AgentIn, x_demo_role: str = Header(...)):
+    with db() as c:
+        agent=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
+        if not agent: raise HTTPException(404,"Agent 없음")
+        require_agent_owner(agent,x_demo_role)
+    return {"valid":not (e:=validate_definition(body.definition)),"errors":e}
 
 @app.post("/api/agents/{agent_id}/publish")
-def publish(agent_id: str):
+def publish(agent_id: str, x_demo_role: str = Header(...)):
     with db() as c:
         a=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
         if not a: raise HTTPException(404,"Agent 없음")
+        require_agent_owner(a,x_demo_role)
         errors=validate_definition(a["definition"])
         if errors: raise HTTPException(422,{"errors":errors})
         version=a["version"]+1 if a["lifecycle"]=="DRAFT" else a["version"]
@@ -377,6 +443,8 @@ def sensor_event(body: SensorEventIn, x_demo_role: str = Header(default="ANALYST
         payload=body.model_dump(); event_id=uid("SNS"); payload["event_id"]=event_id
         eid=create_execution(c,agent,payload,session_for("ANALYST"))
         c.execute("INSERT INTO sensor_events VALUES(?,?,?,?,?,?,?,?)",(event_id,body.sensor_id,body.type,body.area,body.object_count,body.confidence,eid,now()))
+        c.execute("INSERT INTO notifications VALUES(?,?,?,?,?,?)",(uid("NTF"),"COMMANDER","파주시 센서 이벤트",
+                  f"{body.type} · 탐지 {body.object_count}개 · 신뢰도 {body.confidence:.2f}",eid,now()))
         status=c.execute("SELECT status FROM executions WHERE id=?",(eid,)).fetchone()[0]
         return {"event_id":event_id,"execution_id":eid,"status":status}
 
@@ -432,6 +500,9 @@ def decision(approval_id: str, body: DecisionIn, x_demo_role: str = Header(...))
         c.execute("INSERT OR IGNORE INTO reports VALUES(?,?,?,?,?,?,?,?,?,?,0)",(report_id,kind,
                   "파주시 위협분석 보고" if kind=="REGIONAL" else "접경지역 종합상황 보고",e["area"],threat,content,eid,actor,now(),json.dumps(source_ids)))
         c.execute("UPDATE executions SET status='COMPLETED',updated_at=? WHERE id=?",(now(),eid))
+        if kind=="COMMANDER":
+            c.execute("INSERT INTO notifications VALUES(?,?,?,?,?,?)",(uid("NTF"),"COMMANDER","지휘관 보고서 승인 완료",
+                      "새 접경지역 종합상황 보고서를 확인할 수 있습니다.",eid,now()))
         child=None
         if kind=="REGIONAL":
             event_id=uid("EVT")
@@ -447,16 +518,24 @@ def reports(role: str):
     with db() as c:
         q="SELECT * FROM reports"
         if role=="ANALYST": q+=" WHERE area='경기도 파주시'"
-        elif role=="COMMANDER": q+=" WHERE kind='COMMANDER'"
+        elif role=="COMMANDER": q+=" WHERE kind IN ('REGIONAL','COMMANDER')"
         return [row(r) for r in c.execute(q+" ORDER BY approved_at DESC")]
 
 @app.get("/api/dashboard")
 def dashboard(role: str):
     with db() as c:
-        agents=c.execute("SELECT count(*) n FROM agents WHERE role=?",(role,)).fetchone()[0]
+        agents=c.execute("SELECT count(*) n FROM agents WHERE role=? AND owner=?",(role,session_for(role)["user_id"])).fetchone()[0]
         pending=c.execute("SELECT count(*) FROM approvals WHERE reviewer_role=? AND status='PENDING'",(role,)).fetchone()[0]
         active=c.execute("SELECT count(*) FROM executions WHERE status NOT IN ('COMPLETED','REJECTED','FAILED')").fetchone()[0]
         notes=[row(r) for r in c.execute("SELECT * FROM notifications WHERE role=? ORDER BY created_at DESC LIMIT 5",(role,))]
         return {"agent_count":agents,"pending_count":pending,"active_count":active,"notifications":notes}
+
+@app.get("/api/situation-board")
+def situation_board(role: str):
+    if role not in {"ANALYST","STAFF","COMMANDER"}: raise HTTPException(400,"지원하지 않는 역할입니다.")
+    with db() as c:
+        events=[row(r) for r in c.execute("SELECT * FROM sensor_events ORDER BY created_at DESC LIMIT 8")]
+        notes=[row(r) for r in c.execute("SELECT * FROM notifications WHERE role=? ORDER BY created_at DESC LIMIT 8",(role,))]
+        return {"events":events,"notifications":notes}
 
 init_db()

@@ -24,6 +24,7 @@ class WorkflowState(TypedDict, total=False):
     overall_threat_level: str
     summary: str
     priority_areas: list[str]
+    filtered: bool
 
 
 Runner = Callable[[dict[str, Any], WorkflowState, str], dict[str, Any]]
@@ -65,7 +66,15 @@ class LangGraphRuntime:
         graph.set_entry_point(starts[0])
 
         for source, targets in outgoing.items():
-            if "approval" in (nodes[source].get("type", "") + source) and targets:
+            capability = nodes[source].get("type", source)
+            if capability == "filter" and targets:
+                target = targets[0]
+                graph.add_conditional_edges(
+                    source,
+                    lambda state: "stop" if state.get("filtered") else "continue",
+                    {"stop": END, "continue": target},
+                )
+            elif "approval" in (capability + source) and targets:
                 target = targets[0]
                 graph.add_conditional_edges(
                     source,

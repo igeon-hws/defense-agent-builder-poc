@@ -36,9 +36,9 @@ Published sensor/report subscriptions use active versions. Each execution pins i
 | --- | --- |
 | Trigger | Sensor Event (Analyst); Approved Report (Staff). User Request is a visible future item, disabled in this demo. Test Run injects a fixture into the supported trigger. |
 | Data | 작전 정보 조회는 고정 근거 ID가 있는 모의 기록을 반환한다. 승인 지역보고 수집은 승인·저장된 지역 보고만 반환한다. |
-| AI | Threat Analysis and Situation Synthesis use structured Gateway output with evidence references; Report Generator formats a draft from that output (may use the same Gateway if needed). |
+| AI | Threat Analysis and Situation Synthesis use structured Gateway output with evidence references and create the role-specific approval draft. |
 | Control | Event Filter checks area/confidence; Human Approval interrupts for the assigned role. |
-| Action | Report Generator formats the LLM result; Send Report finalizes and persists approved content. Situation Board reads persisted results. |
+| Action | Report publication persists approved content and emits the appropriate in-app report event. Situation Board reads persisted results. |
 
 Report collection and classification can share the Approved Reports node. Correlation and overall assessment belong to Situation Synthesis; do not require separate nodes for every conceptual step.
 
