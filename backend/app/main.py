@@ -37,19 +37,19 @@ def db():
 
 
 ANALYST_NODES = [
-    ("sensor", "Sensor Event", "trigger"), ("filter", "Event Filter", "control"),
-    ("context", "Situation Context", "data"), ("search", "Data Fabric Search", "data"),
-    ("threat", "Threat Analysis", "ai"), ("condition", "Threat Condition", "control"),
-    ("record", "Record Event", "action"), ("notify", "Notification", "action"),
-    ("generator", "Report Generator", "action"), ("approval", "Analyst Approval", "control"),
-    ("send", "Send Regional Report", "action"), ("board", "Update Situation Board", "action"),
+    ("sensor", "감시 센서 이벤트", "trigger"), ("filter", "이벤트 조건 확인", "control"),
+    ("context", "작전 상황 조회", "data"), ("search", "과거 관측자료 검색", "data"),
+    ("threat", "위협 수준 분석", "ai"), ("condition", "위협 수준 분기", "control"),
+    ("record", "관측 기록 저장", "action"), ("notify", "상황 알림", "action"),
+    ("generator", "지역 분석보고서 작성", "action"), ("approval", "분석관 검토·승인", "control"),
+    ("send", "지역 보고서 확정", "action"), ("board", "상황판 반영", "action"),
 ]
 STAFF_NODES = [
-    ("report_trigger", "Approved Report", "trigger"), ("reports", "Approved Reports", "data"),
-    ("context", "Situation Context", "data"), ("search", "Data Fabric Query", "data"),
-    ("synthesis", "Situation Synthesis", "ai"), ("notify", "Notification", "action"),
-    ("generator", "Report Generator", "action"), ("approval", "Staff Approval", "control"),
-    ("send", "Send Commander Report", "action"), ("board", "Update Situation Board", "action"),
+    ("report_trigger", "승인 지역보고 접수", "trigger"), ("reports", "승인 지역보고 수집", "data"),
+    ("context", "접경지역 작전상황 조회", "data"), ("search", "관련 정보 조회", "data"),
+    ("synthesis", "접경지역 위협 종합", "ai"), ("notify", "참모 상황 알림", "action"),
+    ("generator", "지휘관 상황보고 작성", "action"), ("approval", "참모 검토·승인", "control"),
+    ("send", "지휘관 보고서 확정", "action"), ("board", "상황판 반영", "action"),
 ]
 
 
@@ -90,19 +90,38 @@ def init_db():
         """)
         if not c.execute("SELECT 1 FROM agents").fetchone():
             for agent_id, name, role, area, owner in [
-                ("analyst-a12", "A지역 감시·분석 Agent", "ANALYST", "A-12", "analyst.a12"),
-                ("staff-synthesis", "전구 상황 종합 Agent", "STAFF", "ALL", "staff.ops"),
+                ("analyst-a12", "파주 감시·위협분석 에이전트", "ANALYST", "경기도 파주시", "파주지역 분석관"),
+                ("staff-synthesis", "접경지역 상황종합 에이전트", "STAFF", "접경지역 전체", "정보작전 참모"),
             ]:
                 c.execute("INSERT INTO agents VALUES(?,?,?,?,?,?,?,?,?)", (agent_id, name, role, area, owner,
                           "PUBLISHED", 1, json.dumps(graph(role), ensure_ascii=False), now()))
         if not c.execute("SELECT 1 FROM reports WHERE fixture=1").fetchone():
             for rid, area, threat, content in [
-                ("RPT-B07-SEED", "B-07", "MEDIUM", "B-07 지역에서 반복 이동 징후가 식별되었습니다."),
-                ("RPT-C03-SEED", "C-03", "LOW", "C-03 지역은 특이 동향 없이 안정적입니다."),
+                ("RPT-B07-SEED", "경기도 연천군", "MEDIUM", "연천군 북부에서 반복 이동 징후가 식별되었습니다."),
+                ("RPT-C03-SEED", "강원특별자치도 철원군", "LOW", "철원군 일대는 특이 동향 없이 안정적입니다."),
             ]:
                 c.execute("INSERT INTO reports VALUES(?,?,?,?,?,?,?,?,?,?,1)",
                           (rid, "REGIONAL", f"{area} 지역 분석 보고", area, threat, content, None,
                            "seed.system", now(), "[]"))
+        # 기존 데모 DB의 구조와 사용자 설정은 유지하고 표시용 기본 데이터만 새 명칭으로 이관한다.
+        for agent_id, name, area, owner, role in [
+            ("analyst-a12", "파주 감시·위협분석 에이전트", "경기도 파주시", "파주지역 분석관", "ANALYST"),
+            ("staff-synthesis", "접경지역 상황종합 에이전트", "접경지역 전체", "정보작전 참모", "STAFF"),
+        ]:
+            saved = c.execute("SELECT definition FROM agents WHERE id=?", (agent_id,)).fetchone()
+            if saved:
+                definition = json.loads(saved["definition"])
+                labels = {node_id: label for node_id, label, _ in (ANALYST_NODES if role == "ANALYST" else STAFF_NODES)}
+                for node in definition.get("nodes", []):
+                    if node.get("id") in labels:
+                        node["label"] = labels[node["id"]]
+                c.execute("UPDATE agents SET name=?,area=?,owner=?,definition=? WHERE id=?",
+                          (name, area, owner, json.dumps(definition, ensure_ascii=False), agent_id))
+        c.execute("UPDATE reports SET area='경기도 연천군',title='연천군 위협분석 보고',content='연천군 북부에서 반복 이동 징후가 식별되었습니다.' WHERE id='RPT-B07-SEED'")
+        c.execute("UPDATE reports SET area='강원특별자치도 철원군',title='철원군 위협분석 보고',content='철원군 일대는 특이 동향 없이 안정적입니다.' WHERE id='RPT-C03-SEED'")
+        c.execute("UPDATE reports SET area='경기도 파주시',title=replace(title,'A-12 지역','파주시') WHERE area='A-12'")
+        c.execute("UPDATE executions SET area='경기도 파주시' WHERE area='A-12'")
+        c.execute("UPDATE executions SET area='접경지역 전체' WHERE area='ALL'")
 
 
 def row(r):
@@ -120,7 +139,7 @@ def session_for(role: str):
     role = role.upper()
     if role not in {"ANALYST", "STAFF", "COMMANDER"}: raise HTTPException(400, "지원하지 않는 역할입니다.")
     return {"user_id": {"ANALYST":"analyst.a12","STAFF":"staff.ops","COMMANDER":"commander.demo"}[role],
-            "role": role, "area": "A-12" if role == "ANALYST" else "ALL",
+            "role": role, "area": "경기도 파주시" if role == "ANALYST" else "접경지역 전체",
             "permissions": {"ANALYST":["agent:edit","review:analyst"],"STAFF":["agent:edit","review:staff"],"COMMANDER":["report:read"]}[role]}
 
 
@@ -136,22 +155,35 @@ def trace(c, eid, node_id, label, status="SUCCEEDED", inp="", out=""):
 
 def run_until_approval(c, execution: dict, role: str):
     eid = execution["id"]
-    configured = execution.get("definition", {}).get("nodes", [])
-    source = ([(n["id"], n.get("label", n["id"]), n.get("group", "action")) for n in configured]
-              if configured else (ANALYST_NODES if role == "ANALYST" else STAFF_NODES))
+    definition = execution.get("definition", {})
+    configured = definition.get("nodes", [])
+    by_id = {n["id"]: n for n in configured}
+    outgoing: dict[str, list[str]] = {node_id: [] for node_id in by_id}
+    incoming = {node_id: 0 for node_id in by_id}
+    for edge in definition.get("edges", []):
+        if edge.get("source") in outgoing and edge.get("target") in incoming:
+            outgoing[edge["source"]].append(edge["target"]); incoming[edge["target"]] += 1
+    ordered_ids=[]; queue=[node_id for node_id,count in incoming.items() if count == 0]
+    while queue:
+        node_id=queue.pop(0); ordered_ids.append(node_id)
+        for target in outgoing.get(node_id, []):
+            incoming[target] -= 1
+            if incoming[target] == 0: queue.append(target)
+    source = ([(node_id, by_id[node_id].get("label", node_id), by_id[node_id].get("group", "action")) for node_id in ordered_ids]
+              if ordered_ids else (ANALYST_NODES if role == "ANALYST" else STAFF_NODES))
     approval_index = next(i for i,n in enumerate(source) if n[0] == "approval")
     for node_id, label, _ in source[:approval_index]:
         output = ""
-        if node_id == "filter": output = "A-12 / confidence 0.94 통과"
+        if node_id == "filter": output = "경기도 파주시 / 신뢰도 0.94 통과"
         elif node_id in ("search","context"): output = "Mock evidence 3건 조회"
         elif node_id == "threat": output = "HIGH · 복수 이동체 접근 징후"
-        elif node_id == "reports": output = "A-12, B-07, C-03 승인 보고서 수집"
-        elif node_id == "synthesis": output = "Overall HIGH · A-12 우선 대응"
+        elif node_id == "reports": output = "파주·연천·철원 승인 보고서 수집"
+        elif node_id == "synthesis": output = "종합 위협 높음 · 파주 우선 대응"
         trace(c,eid,node_id,label,out=output)
-    draft = ("A-12 지역에서 신뢰도 0.94의 복수 이동체가 탐지되었습니다. 과거 관측 3건과 연계되어 "
+    draft = ("경기도 파주시 북부에서 신뢰도 0.94의 복수 이동체가 탐지되었습니다. 과거 관측 3건과 연계되어 "
              "위협 수준을 HIGH로 평가하며 경계 강화를 권고합니다." if role == "ANALYST" else
-             "A-12의 신규 고위협 징후와 B-07, C-03 승인 보고를 종합했습니다. 전구 위협 수준은 HIGH이며 "
-             "A-12 감시 자산 증강과 B-07 연계 추적을 권고합니다.")
+             "파주시의 신규 고위협 징후와 연천군·철원군 승인 보고를 종합했습니다. 접경지역 위협 수준은 HIGH이며 "
+             "파주 감시 자산 증강과 연천 연계 추적을 권고합니다.")
     aid = uid("APR")
     trace(c,eid,"approval",source[approval_index][1],"WAITING",out="명시적 승인 대기")
     c.execute("INSERT INTO approvals VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -226,6 +258,19 @@ def validate_definition(d):
     if any(e.get("source") not in ids or e.get("target") not in ids for e in edges): errors.append("연결되지 않은 edge endpoint가 있습니다.")
     if not any("approval" in (n.get("type","")+n.get("id","")) for n in nodes): errors.append("Human Approval 노드가 필요합니다.")
     if not any(n.get("id")=="send" for n in nodes): errors.append("Send Report 노드가 필요합니다.")
+    if nodes and edges:
+        incoming={node_id:0 for node_id in ids}; outgoing={node_id:[] for node_id in ids}
+        for edge in edges:
+            if edge.get("source") in outgoing and edge.get("target") in incoming:
+                outgoing[edge["source"]].append(edge["target"]); incoming[edge["target"]]+=1
+        starts=[node_id for node_id,count in incoming.items() if count==0]
+        reachable=set(starts); stack=list(starts)
+        while stack:
+            for target in outgoing.get(stack.pop(),[]):
+                if target not in reachable: reachable.add(target); stack.append(target)
+        if "send" not in reachable: errors.append("시작 노드에서 보고서 확정 노드까지 연결해야 합니다.")
+        approval_ids={n.get("id") for n in nodes if "approval" in (n.get("type","")+n.get("id",""))}
+        if not approval_ids.intersection(reachable): errors.append("승인 노드가 실행 경로에 연결되어야 합니다.")
     return errors
 
 @app.post("/api/agents/{agent_id}/validate")
@@ -248,7 +293,7 @@ def test_agent(agent_id: str, x_demo_role: str = Header(default="ANALYST")):
         a=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
         if not a: raise HTTPException(404,"Agent 없음")
         require_role(a["role"],x_demo_role)
-        fixture={"sensor_id":"SENSOR-A-03","type":"MOTION","area":"A-12","object_count":4,"confidence":0.94}
+        fixture={"sensor_id":"파주-감시센서-03","type":"이동체 감지","area":"경기도 파주시","object_count":4,"confidence":0.94}
         eid=create_execution(c,a,fixture,session_for(x_demo_role))
         return {"execution_id":eid}
 
@@ -257,7 +302,7 @@ def executions(role: str):
     with db() as c:
         q="SELECT * FROM executions"
         params=()
-        if role=="ANALYST": q+=" WHERE role='ANALYST' AND area='A-12'"
+        if role=="ANALYST": q+=" WHERE role='ANALYST' AND area='경기도 파주시'"
         elif role=="STAFF": q+=" WHERE role IN ('ANALYST','STAFF')"
         elif role=="COMMANDER": q+=" WHERE status='COMPLETED'"
         return [row(r) for r in c.execute(q+" ORDER BY created_at DESC",params)]
@@ -295,7 +340,7 @@ def decision(approval_id: str, body: DecisionIn, x_demo_role: str = Header(...))
         if kind=="COMMANDER":
             source_ids=[r["id"] for r in c.execute("SELECT id FROM reports WHERE kind='REGIONAL' ORDER BY approved_at DESC LIMIT 3")]
         c.execute("INSERT OR IGNORE INTO reports VALUES(?,?,?,?,?,?,?,?,?,?,0)",(report_id,kind,
-                  "A-12 지역 위협 분석 보고" if kind=="REGIONAL" else "전구 상황 종합 보고",e["area"],"HIGH",content,eid,actor,now(),json.dumps(source_ids)))
+                  "파주시 위협분석 보고" if kind=="REGIONAL" else "접경지역 종합상황 보고",e["area"],"HIGH",content,eid,actor,now(),json.dumps(source_ids)))
         trace(c,eid,"send","Send Report",out=f"{report_id} 저장")
         trace(c,eid,"board","Update Situation Board",out="승인 보고 반영")
         c.execute("UPDATE executions SET status='COMPLETED',updated_at=? WHERE id=?",(now(),eid))
@@ -313,7 +358,7 @@ def decision(approval_id: str, body: DecisionIn, x_demo_role: str = Header(...))
 def reports(role: str):
     with db() as c:
         q="SELECT * FROM reports"
-        if role=="ANALYST": q+=" WHERE area='A-12'"
+        if role=="ANALYST": q+=" WHERE area='경기도 파주시'"
         elif role=="COMMANDER": q+=" WHERE kind='COMMANDER'"
         return [row(r) for r in c.execute(q+" ORDER BY approved_at DESC")]
 
