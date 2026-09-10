@@ -1,59 +1,71 @@
-# defense-agent-builder-poc
+# Defense Workflow Builder PoC
 
-## 실제 LLM 설정
+React Flow로 역할별 워크플로우를 구성하고, FastAPI와 LangGraph로 실행하는 세미나용 데모입니다. 현재 구현 범위와 제한 사항은 [현재 구현 상태](docs/IMPLEMENTATION_STATUS.md)를 먼저 확인하세요.
 
-프로젝트 루트의 `.env`에 API 키를 설정합니다.
+## 요구 환경
 
-```dotenv
+- Python 3.11 이상
+- Node.js 20 이상
+
+## 환경 변수
+
+프로젝트 루트의 .env 파일을 백엔드가 자동으로 읽습니다.
+
+~~~dotenv
 OPENAI_API_KEY=발급받은_API_키
 OPENAI_MODEL=gpt-4.1-mini
-```
+OPENAI_ALLOWED_MODELS=gpt-4.1-mini,gpt-5-mini
+~~~
 
-백엔드는 시작할 때 이 파일을 자동으로 읽습니다. 키 없이 UI만 점검할 때는 `DEMO_MODEL_MODE=deterministic`을 추가합니다. 기본값은 실제 OpenAI Responses API 호출인 `openai`입니다.
-defense-agent-builder poc 
-
-# To-do - agent builder poc 개발
-- Project Setting (Python, Github)
-- vibe coding Setting (AGENTS.md, ..)
-- notion source of truth -> local docs, 실행 명세 남기기
-
-# 지침
-- PoC, Demo 성격에 맞게, 너무 과도하게 하지 않기, 간단하게.
+기본 실행 모드는 실제 OpenAI Responses API 호출입니다. 키 없이 화면 흐름만 확인할 때는 DEMO_MODEL_MODE=deterministic을 추가합니다.
 
 ## 실행
 
-요구 환경은 Python 3.11+와 Node.js 20+입니다.
+첫 번째 PowerShell에서 백엔드를 실행합니다.
 
-```powershell
+~~~powershell
 cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
+python -m uvicorn app.main:app --reload
+~~~
 
-새 터미널에서 프론트엔드를 실행합니다.
+두 번째 PowerShell에서 프론트엔드를 실행합니다.
 
-```powershell
+~~~powershell
 cd frontend
 npm install
 npm run dev
-```
+~~~
 
-브라우저에서 `http://localhost:5173`을 엽니다. 최초 실행 시 파주 분석관/정보작전 참모 Agent와 연천군, 철원군 승인 보고 fixture가 SQLite에 자동으로 생성됩니다.
-
-현재 구현은 화면과 승인 흐름을 안정적으로 리허설하기 위한 `DETERMINISTIC_REHEARSAL` 모드입니다. 외부 모델 API 연결 전에는 실제 외부 LLM 결과로 간주하지 않습니다.
+브라우저에서 http://localhost:5173 을 엽니다. 최초 실행 시 파주 분석관·정보작전 참모 기본 워크플로우와 연천군·철원군 승인 보고 fixture가 생성됩니다.
 
 ## 데모 순서
 
-1. Analyst로 로그인해 Agent Builder에서 그래프를 편집하고 저장·검증·게시합니다.
-2. Test Run으로 파주시 센서 fixture를 실행하고 분석관 승인 화면에서 초안을 수정·승인합니다.
-3. 생성된 지역 보고가 Staff 실행을 자동 시작하는지 연결된 실행에서 확인합니다.
-4. 역할을 Staff로 바꾸고 지휘관 보고 초안을 승인합니다.
-5. Commander로 전환해 상황판에서 승인된 최종 보고와 출처 계보를 확인합니다.
+1. 분석관으로 로그인해 워크플로우 그래프, 이벤트 조건, AI 모델과 프롬프트를 설정하고 저장·검증·게시합니다.
+2. 센서 입력에서 파주시 이벤트를 전송하고 AI가 생성한 지역 보고서 초안을 검토·승인합니다.
+3. 승인된 지역 보고가 참모 워크플로우를 자동 실행하는지 확인합니다.
+4. 정보·작전 참모로 전환해 AI가 생성한 지휘관 보고서 초안을 승인합니다.
+5. 지휘관으로 전환해 상황판의 보고서 도착 알림을 클릭하고 최종 보고서를 확인합니다.
 
-## 신규 에이전트와 LangGraph 실행
+## 데이터 초기화
 
-Agent Registry의 `새 에이전트`에서 빈 캔버스 또는 역할별 템플릿을 선택할 수 있습니다. 빈 캔버스는 미완성 상태로도 초안 저장이 가능하며, 노드를 배치하고 연결한 뒤 검증을 통과해야 게시할 수 있습니다.
+백엔드를 종료한 뒤 다음 파일을 삭제하고 다시 실행합니다.
 
-게시할 때 `agent_versions`에 불변 스냅샷이 저장됩니다. 시험 실행은 Builder JSON을 실제 LangGraph `StateGraph`로 컴파일하고 SQLite checkpointer에 실행 상태를 기록합니다. 승인 노드는 `interrupt()`로 중단되며 승인·수정승인·반려는 같은 thread ID에 `Command(resume=...)`를 전달해 재개합니다.
+~~~powershell
+cd backend
+Remove-Item .\demo.db -ErrorAction SilentlyContinue
+Remove-Item .\checkpoints.db, .\checkpoints.db-shm, .\checkpoints.db-wal -ErrorAction SilentlyContinue
+python -m uvicorn app.main:app --reload
+~~~
+
+.env는 삭제하지 않습니다.
+
+## 문서
+
+- [제품 요구사항](docs/PRD.md)
+- [아키텍처](docs/ARCHITECTURE.md)
+- [UI 명세](docs/UI_SPEC.md)
+- [데모 시나리오](docs/DEMO_SCENARIO.md)
+- [현재 구현 상태](docs/IMPLEMENTATION_STATUS.md)

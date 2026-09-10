@@ -1,4 +1,4 @@
-# Agent Builder Demo — Architecture
+# Workflow Builder Demo — Architecture
 
 Scope and planning provenance: [PRD.md](PRD.md). Interaction requirements: [UI_SPEC.md](UI_SPEC.md). Verification: [DEMO_SCENARIO.md](DEMO_SCENARIO.md).
 
@@ -16,15 +16,15 @@ React / TypeScript / React Flow
 
 Use one backend process and SQLite. Separate modules and interfaces, not deployable services. Builder JSON stays independent of LangGraph classes. AI nodes call the Gateway, never vendor SDKs directly. A simple in-process event dispatcher backed by persisted pending events is sufficient; no Kafka, worker fleet or message broker.
 
-## Agent Definition and compilation
+## Workflow Definition and compilation
 
-Save JSON containing schema_version, agent_id, workflow_id, name, description, owner, allowed_roles, required_permissions, monitoring_area, trigger, approval_policy, output_type, model, nodes and edges. Model contains separate provider and model_id plus generation settings. A node contains id, type, config and position. Edges contain source, target and an optional named condition branch. Store business node types, not executable Python or vendor-specific objects.
+Workflow Definition JSON은 schema_version, 설명, 모델 설정, 노드와 edge를 저장한다. 노드는 id, type, label, group, config, position을 가지며 edge는 source와 target을 가진다. 실행 가능한 Python 코드나 API credential은 Definition에 저장하지 않는다.
 
-Agent versions carry version, lifecycle_status and the full definition. Minimal lifecycle: DRAFT → PUBLISHED → SUSPENDED. Publish validates and snapshots a draft; Test uses a saved snapshot, even if unpublished. Registry registration is achieved by persistence and publishing; do not build a second formal review workflow. Agent deployment approval and an execution's Human Approval are different concepts. The former is deferred; the latter is mandatory.
+Workflow versions carry version, lifecycle_status and the full definition. Minimal lifecycle: DRAFT → PUBLISHED → SUSPENDED. Publish validates and snapshots a draft; Test uses a saved snapshot, even if unpublished. Registry registration is achieved by persistence and publishing; do not build a second formal review workflow. Workflow deployment approval and an execution's Human Approval are different concepts. The former is deferred; the latter is mandatory.
 
 `POST /api/agents` creates a new DRAFT with an empty canvas and role-compatible metadata. Template selection is optional and copies business JSON only. `agent_versions` stores every published snapshot under `(agent_id, version)`; publication never overwrites a previous row. Executions reference the exact saved snapshot and version used at start.
 
-Validator checks required configuration, unique IDs, valid endpoints, one supported trigger, supported node types, reachable outputs, no unsupported cycles, named LOW/MEDIUM/HIGH routing, role-compatible nodes, and a required role-specific Human Approval on every route to Send Report. Reject bypasses around approval. Compiler maps only the supported nodes to LangGraph. Canvas-only position changes do not affect execution; config and edge edits do.
+현재 Validator는 빈 그래프, 노드 ID 중복, 잘못된 edge endpoint, 단일 시작점, 승인·발행 노드 존재 여부와 시작점에서 해당 노드까지의 도달 가능성을 검사한다. 역할별 노드 노출과 워크플로우 소유권은 API에서 제한한다. 노드별 Input/Output 호환성을 따라가는 정적 데이터 흐름 검증과 일반적인 cycle 검출은 아직 구현되지 않았다. 캔버스 위치 변경은 실행에 영향을 주지 않고 config와 edge 변경은 실행에 반영된다.
 
 The compiler performs a topological walk of Builder edges, creates one LangGraph node for every reachable business node, maps conditional edge labels to routing functions, and compiles with the shared SQLite checkpointer. Capability functions receive and return typed workflow state. The API must not emulate waiting by stopping a Python loop; the checkpoint and pending interrupt are the source of truth.
 
@@ -82,19 +82,19 @@ A COMMANDER report is persisted after Staff approval but must not emit APPROVED_
 
 기본 실행 모드는 `openai`이며 백엔드의 `OPENAI_API_KEY`로 Responses API를 호출한다. 기본 모델은 `gpt-4.1-mini`이고 `OPENAI_MODEL`, `OPENAI_BASE_URL`로 교체할 수 있다. 위협 분석과 상황 종합은 `text.format.type=json_schema` 구조화 출력을 사용한다. `DEMO_MODEL_MODE=deterministic`은 키 없이 UI를 점검하는 명시적 리허설 모드이며 화면과 health 응답에 표시한다.
 
-Expose generate(messages, model_config) and structured_generate(messages, schema, model_config). Implement one real external provider. Reserve provider registration as the extension point for vLLM/Ollama/local HF without installing or serving them now. Keep external API credentials in backend environment configuration, never Agent Definition JSON or frontend storage.
+Expose generate(messages, model_config) and structured_generate(messages, schema, model_config). Implement one real external provider. Reserve provider registration as the extension point for vLLM/Ollama/local HF without installing or serving them now. Keep external API credentials in backend environment configuration, never Workflow Definition JSON or frontend storage.
 
-Validate structured output. Threat analysis requires threat_level LOW/MEDIUM/HIGH, summary and evidence_ids; synthesis requires overall_threat_level, summary, priority_areas and source_report_ids. Evidence references must resolve to supplied data. Sensor confidence is distinct from model certainty. Use a bounded timeout and at most one automatic retry for transient provider failures; malformed output or exhausted retries fails visibly without fabricated approval or report. Deterministic test/rehearsal output must be labeled as such.
+구조화 출력을 검증한다. 위협 분석 출력은 threat_level, summary, evidence_ids, draft를 포함하고 상황 종합 출력은 overall_threat_level, summary, priority_areas, source_report_ids, draft를 포함한다. Sensor confidence는 모델 판단과 별개의 입력이다. 호출 실패나 잘못된 출력은 승인·보고서를 만들지 않고 실행 실패로 표시한다. 리허설 출력은 deterministic 모드로 명시한다.
 
 ## Minimal API boundaries (implementation defaults)
 
 | API responsibility | Suggested endpoints / contract |
 | --- | --- |
 | Mock session | POST /api/session, role switch via same operation; return static session context |
-| Catalog and definitions | GET /api/nodes; GET/POST /api/agents; GET/PUT /api/agents/{id}; POST .../validate and .../publish |
+| Catalog and definitions | GET /api/nodes, GET /api/models; GET/POST/DELETE /api/agents; GET/PUT /api/agents/{id}; POST .../validate and .../publish |
 | Start/test | POST /api/agents/{id}/test with fixture and saved snapshot; POST /api/sensor-events for active published subscription |
 | Execution | GET /api/executions and /api/executions/{id}; GET .../trace |
 | Approval | POST /api/approvals/{id}/decision with APPROVE, EDIT_APPROVE or REJECT and optional edited content/comment |
-| Read models | GET /api/reports, /api/reports/{id}, /api/situation-board, /api/notifications |
+| Read models | GET /api/reports, /api/situation-board, /api/dashboard |
 
 Backend applies the same small role/area policy to reads, node validation and approval actions as the frontend. Return clear validation, forbidden-role, conflict/stale-decision and provider error messages. This is demo policy, not a production RBAC/ABAC system. Send to Superior/Commander means in-app report availability, not email or an external system integration.

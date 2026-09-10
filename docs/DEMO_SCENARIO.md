@@ -1,4 +1,4 @@
-# Agent Builder Demo — Scenario and Acceptance
+# Workflow Builder Demo — Scenario and Acceptance
 
 ## 센서 입력 및 실제 LLM 확인
 
@@ -14,7 +14,7 @@ Read [PRD.md](PRD.md), [ARCHITECTURE.md](ARCHITECTURE.md) and [UI_SPEC.md](UI_SP
 - Run React frontend and FastAPI/LangGraph backend with SQLite persistence and configured external LLM credentials. Check provider connectivity before presenting. Record the provider/model used without exposing secrets.
 - Seed a 경기도 파주시 Analyst, Staff and Commander mock identities; Analyst and Staff editable templates; mock Situation Context/Data Fabric evidence; preapproved 경기도 연천군 MEDIUM and 강원특별자치도 철원군 LOW regional reports marked as demo fixtures.
 - 연천군/철원군 seeding must not trigger Staff runs. Their preapproved status represents external historical input; it does not bypass approval for the newly generated 파주시 report.
-- Publish one Staff Agent subscription before the Analyst report is approved. Ensure one active Analyst 경기도 파주시 subscription. Use an isolated demo dataset with no previous pending runs; any reset must be explicit and limited to demo data.
+- Publish one Staff Workflow subscription before the Analyst report is approved. Ensure one active Analyst 경기도 파주시 subscription. Use an isolated demo dataset with no previous pending runs; any reset must be explicit and limited to demo data.
 - Main sensor fixture below targets MEDIUM/HIGH; do not force an external model result into HIGH. Rehearse with suitable evidence/prompt. If the actual model returns LOW, display that branch honestly and choose a separately labeled test fixture to demonstrate approval. Deterministic test mode cannot satisfy the live external-provider criterion.
 
 ```json
@@ -33,16 +33,16 @@ The backend adds a unique event ID and timestamp. Mock evidence includes three r
 
 | Time | Presenter action | Required visible/system result |
 | --- | --- | --- |
-| 0:00–1:00 | Login as 파주지역 Analyst; open 파주 감시·위협분석 Agent | Role-filtered Dashboard, Analyst palette, editable template |
+| 0:00–1:00 | Login as 파주지역 Analyst; open 파주 감시·위협분석 Workflow | Role-filtered Dashboard, Analyst palette, editable template |
 | 1:00–3:00 | Show node composition; edit event confidence/prompt, Apply, Save, Validate and Publish | Saved/published definition reflects the edit; role, model and version visible |
 | 3:00–4:30 | 센서 입력에서 규모/신뢰도를 조절해 전송; 실행 상세 열기 | 감시 센서 → 조건 확인 → 작전 정보 → 실제 LLM 위협 분석 순서가 trace에 표시 |
 | 4:30–6:00 | Inspect MEDIUM/HIGH alert and approval drawer; edit one report sentence and explicitly approve | Draft pauses at WAITING_FOR_ANALYST_APPROVAL; then same execution resumes with edited content |
 | 6:00–7:00 | Inspect approved 파주시 report; switch header to Staff | Report persisted, event dispatched, exactly one linked Staff run starts automatically |
 | 7:00–9:00 | Open Staff Builder/execution and inspect source reports | New A report + seeded B/C reports → collection/classification → context/search → Situation Synthesis → Commander draft |
 | 9:00–10:00 | Inspect WAITING_FOR_STAFF_APPROVAL and approve | Staff decision resumes same run; final COMMANDER report persisted; no recursive Staff trigger |
-| 10:00–11:00 | Switch to Commander; open final report and board | Final report readable with approver and source lineage; no Builder/approval controls |
+| 10:00–11:00 | 지휘관으로 전환하고 보고서 도착 알림 클릭 | 지도·센서 이벤트·도착 알림이 보이고, 알림에서 최종 보고서와 승인자·원본 실행을 확인 |
 
-Before the main flow, demonstrate creation in under one minute: choose `새 Agent`, enter a name and area, select Blank, add the supported trigger/data/AI/approval/report nodes, connect their handles, save, validate and publish v1. Start a test from v1 and show that the execution detail uses the same pinned graph. Keep the seeded Agent available as a recovery path for the live seminar.
+Before the main flow, demonstrate creation in under one minute: choose `새 Workflow`, enter a name and area, select Blank, add the supported trigger/data/AI/approval/report nodes, connect their handles, save, validate and publish v1. Start a test from v1 and show that the execution detail uses the same pinned graph. Keep the seeded Workflow available as a recovery path for the live seminar.
 
 Each AI node produces its role-specific draft before approval. After each approval, the publication Action persists the approved content and Situation Board reflects persisted records. Publication means in-app delivery. Execution view provides cross-links from the regional report to the Staff run and from the Commander report to its source reports.
 
@@ -62,23 +62,23 @@ Each AI node produces its role-specific draft before approval. After each approv
 
 | ID | Given / When | Pass condition |
 | --- | --- | --- |
-| AC-01 | Login/switch through all three roles | Correct agent/node/data scope; Commander read-only; no production login infrastructure |
-| AC-02 | Change supported nodes, edges and config, save and reload | Graph/config persist; changes drive execution; invalid edges, unsupported cycles and approval bypass fail validation |
-| AC-02A | Create a blank role-compatible Agent | A new DRAFT is persisted, opens in Builder, survives refresh, and exposes only role-compatible nodes |
-| AC-02B | Connect, validate and publish the new Agent | An immutable version snapshot is created; Registry shows it and the published graph can start a real LangGraph execution |
-| AC-03 | Publish then edit an Agent while a run is paused | Registry shows version/owner/trigger; paused run retains original snapshot |
+| AC-01 | Login/switch through all three roles | Correct workflow/node/data scope; Commander read-only; no production login infrastructure |
+| AC-02 | 지원 노드, edge와 설정을 변경하고 저장·새로고침 | 그래프와 설정이 유지되고 실행에 반영된다. 잘못된 endpoint, 단일 시작점 위반, 승인·발행 노드 누락은 검증에서 실패한다. |
+| AC-02A | Create a blank role-compatible Workflow | A new DRAFT is persisted, opens in Builder, survives refresh, and exposes only role-compatible nodes |
+| AC-02B | Connect, validate and publish the new Workflow | An immutable version snapshot is created; Registry shows it and the published graph can start a real LangGraph execution |
+| AC-03 | Publish then edit an Workflow while a run is paused | Registry shows version/owner/trigger; paused run retains original snapshot |
 | AC-04 | Start the main Analyst fixture in actual-demo mode | External Gateway call produces validated output; mocked inputs are labeled; real node trace updates in Builder and Execution |
 | AC-05 | Analyst run reaches Human Approval | Durable WAITING_FOR_ANALYST_APPROVAL; no regional final report/event before explicit approval |
 | AC-06 | Edit and approve Analyst draft | Same thread resumes; exact edited content, actor and timestamp are persisted in the approved REGIONAL report |
 | AC-07 | Commit the new regional report | Exactly one report event starts exactly one active Staff execution; source report ID matches persisted 파주시 output |
 | AC-08 | Staff synthesis executes | New 파주시 and approved 연천군/철원군 fixture IDs are recorded as inputs; draft shows synthesis/evidence and pauses at WAITING_FOR_STAFF_APPROVAL |
-| AC-09 | Staff approves | Same Staff thread resumes; one COMMANDER report created, no recursive Staff event; Commander can read approved result |
+| AC-09 | 참모가 승인 | 같은 참모 thread가 재개되고 COMMANDER 보고서와 도착 알림이 한 건 생성된다. 지휘관은 알림을 클릭해 보고서를 연다. |
 | AC-10 | Reject at either approval gate | Run ends REJECTED; no corresponding final report/downstream action; decision trace remains |
 | AC-11 | LOW/filtered fixture runs | Clearly recorded outcome, no accidental approval/report/Staff launch |
 | AC-12 | Refresh/restart during either pending review | Same checkpoint/draft recover, same execution resumes; no duplicated pre-approval model call or publishing |
 | AC-13 | Duplicate decision/event or crash-window recovery | Unique report and Staff execution invariants hold; stale/conflicting reviews fail visibly |
 | AC-14 | Switch roles with dirty graph or waiting review | Save/Discard/Cancel protects edits; role scope refetches; original runtime actor unchanged; backend rejects wrong-role review |
-| AC-15 | View Situation Board and final report | OpenStreetMap-based 파주·연천·철원 view, approved reports, seed badges and source lineage; no draft shown as final |
+| AC-15 | 지휘관 상황판에서 최종 보고 확인 | 지휘관에게 대시보드·상황판 중복 메뉴가 없고 상황판 단일 메뉴에서 지도, 최근 센서 이벤트와 보고서 도착 알림을 확인한다. |
 | AC-16 | Fail the external provider | Clear failed trace with bounded retry; no fabricated output, report or auto-approval |
 
 ## Verification evidence and completion

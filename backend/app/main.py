@@ -104,8 +104,8 @@ def init_db():
         """)
         if not c.execute("SELECT 1 FROM agents").fetchone():
             for agent_id, name, role, area, owner in [
-                ("analyst-a12", "파주 감시·위협분석 에이전트", "ANALYST", "경기도 파주시", "analyst.a12"),
-                ("staff-synthesis", "접경지역 상황종합 에이전트", "STAFF", "접경지역 전체", "staff.ops"),
+                ("analyst-a12", "파주 감시·위협분석 워크플로우", "ANALYST", "경기도 파주시", "analyst.a12"),
+                ("staff-synthesis", "접경지역 상황종합 워크플로우", "STAFF", "접경지역 전체", "staff.ops"),
             ]:
                 c.execute("INSERT INTO agents VALUES(?,?,?,?,?,?,?,?,?)", (agent_id, name, role, area, owner,
                           "PUBLISHED", 1, json.dumps(graph(role), ensure_ascii=False), now()))
@@ -121,8 +121,8 @@ def init_db():
                            "seed.system", now(), "[]"))
         # 기존 데모 DB의 구조와 사용자 설정은 유지하고 표시용 기본 데이터만 새 명칭으로 이관한다.
         for agent_id, name, area, owner, role in [
-            ("analyst-a12", "파주 감시·위협분석 에이전트", "경기도 파주시", "analyst.a12", "ANALYST"),
-            ("staff-synthesis", "접경지역 상황종합 에이전트", "접경지역 전체", "staff.ops", "STAFF"),
+            ("analyst-a12", "파주 감시·위협분석 워크플로우", "경기도 파주시", "analyst.a12", "ANALYST"),
+            ("staff-synthesis", "접경지역 상황종합 워크플로우", "접경지역 전체", "staff.ops", "STAFF"),
         ]:
             saved = c.execute("SELECT definition FROM agents WHERE id=?", (agent_id,)).fetchone()
             if saved:
@@ -168,7 +168,7 @@ def require_role(expected: str, role: str | None):
 
 def require_agent_owner(agent: dict[str, Any], role: str):
     require_role(agent["role"],role)
-    if agent["owner"] != session_for(role)["user_id"]: raise HTTPException(403,"본인 소유 에이전트만 관리할 수 있습니다.")
+    if agent["owner"] != session_for(role)["user_id"]: raise HTTPException(403,"본인 소유 워크플로우만 관리할 수 있습니다.")
 
 
 def trace(c, eid, node_id, label, status="SUCCEEDED", inp="", out=""):
@@ -274,7 +274,7 @@ def create_execution(c, agent, trigger_payload, initiating, source_report_id=Non
     return eid
 
 
-app = FastAPI(title="Defense Agent Builder Demo")
+app = FastAPI(title="Defense Workflow Builder Demo")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -305,7 +305,7 @@ def health(): return {"status":"ok",**GATEWAY.status(),"database":str(DB_PATH)}
 
 @app.get("/api/models")
 def models(x_demo_role: str = Header(...)):
-    if x_demo_role not in {"ANALYST","STAFF"}: raise HTTPException(403,"에이전트 편집 권한이 없습니다.")
+    if x_demo_role not in {"ANALYST","STAFF"}: raise HTTPException(403,"워크플로우 편집 권한이 없습니다.")
     return [{"id":model,"label":model,"default":model==GATEWAY.model} for model in GATEWAY.allowed_models]
 
 @app.post("/api/session")
@@ -320,7 +320,7 @@ def nodes(role: str, x_demo_role: str = Header(...)):
 
 @app.get("/api/agents")
 def agents(role: str, x_demo_role: str = Header(...)):
-    if role != x_demo_role: raise HTTPException(403,"다른 사용자의 에이전트 레지스트리에 접근할 수 없습니다.")
+    if role != x_demo_role: raise HTTPException(403,"다른 사용자의 워크플로우 레지스트리에 접근할 수 없습니다.")
     if role == "COMMANDER": return []
     owner=session_for(role)["user_id"]
     with db() as c:
@@ -345,12 +345,12 @@ def create_agent(body: AgentCreateIn, x_demo_role: str = Header(...)):
 
 @app.delete("/api/agents/{agent_id}")
 def delete_agent(agent_id: str, x_demo_role: str = Header(...)):
-    if agent_id in {"analyst-a12","staff-synthesis"}: raise HTTPException(409,"기본 제공 에이전트는 삭제할 수 없습니다.")
+    if agent_id in {"analyst-a12","staff-synthesis"}: raise HTTPException(409,"기본 제공 워크플로우는 삭제할 수 없습니다.")
     with db() as c:
         agent=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
-        if not agent: raise HTTPException(404,"에이전트를 찾을 수 없습니다.")
+        if not agent: raise HTTPException(404,"워크플로우를 찾을 수 없습니다.")
         require_role(agent["role"],x_demo_role)
-        if agent["owner"] != session_for(x_demo_role)["user_id"]: raise HTTPException(403,"본인이 만든 에이전트만 삭제할 수 있습니다.")
+        if agent["owner"] != session_for(x_demo_role)["user_id"]: raise HTTPException(403,"본인이 만든 워크플로우만 삭제할 수 있습니다.")
         c.execute("DELETE FROM agent_versions WHERE agent_id=?",(agent_id,))
         c.execute("DELETE FROM agents WHERE id=?",(agent_id,))
     return {"deleted":True,"id":agent_id}
@@ -359,7 +359,7 @@ def delete_agent(agent_id: str, x_demo_role: str = Header(...)):
 def get_agent(agent_id: str, x_demo_role: str = Header(...)):
     with db() as c:
         out=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
-        if not out: raise HTTPException(404,"Agent를 찾을 수 없습니다.")
+        if not out: raise HTTPException(404,"워크플로우를 찾을 수 없습니다.")
         require_agent_owner(out,x_demo_role)
         return out
 
@@ -367,7 +367,7 @@ def get_agent(agent_id: str, x_demo_role: str = Header(...)):
 def save_agent(agent_id: str, body: AgentIn, x_demo_role: str = Header(...)):
     with db() as c:
         agent=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
-        if not agent: raise HTTPException(404,"Agent 없음")
+        if not agent: raise HTTPException(404,"워크플로우 없음")
         require_agent_owner(agent,x_demo_role)
         c.execute("UPDATE agents SET definition=?,lifecycle='DRAFT',updated_at=? WHERE id=?",
                   (json.dumps(body.definition,ensure_ascii=False),now(),agent_id))
@@ -401,7 +401,7 @@ def validate_definition(d):
 def validate(agent_id: str, body: AgentIn, x_demo_role: str = Header(...)):
     with db() as c:
         agent=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
-        if not agent: raise HTTPException(404,"Agent 없음")
+        if not agent: raise HTTPException(404,"워크플로우 없음")
         require_agent_owner(agent,x_demo_role)
     return {"valid":not (e:=validate_definition(body.definition)),"errors":e}
 
@@ -409,7 +409,7 @@ def validate(agent_id: str, body: AgentIn, x_demo_role: str = Header(...)):
 def publish(agent_id: str, x_demo_role: str = Header(...)):
     with db() as c:
         a=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
-        if not a: raise HTTPException(404,"Agent 없음")
+        if not a: raise HTTPException(404,"워크플로우 없음")
         require_agent_owner(a,x_demo_role)
         errors=validate_definition(a["definition"])
         if errors: raise HTTPException(422,{"errors":errors})
@@ -423,7 +423,7 @@ def publish(agent_id: str, x_demo_role: str = Header(...)):
 def test_agent(agent_id: str, x_demo_role: str = Header(default="ANALYST")):
     with db() as c:
         a=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
-        if not a: raise HTTPException(404,"Agent 없음")
+        if not a: raise HTTPException(404,"워크플로우 없음")
         require_role(a["role"],x_demo_role)
         errors=validate_definition(a["definition"])
         if errors: raise HTTPException(422,{"errors":errors})
@@ -439,7 +439,7 @@ def sensor_event(body: SensorEventIn, x_demo_role: str = Header(default="ANALYST
     if body.area != "경기도 파주시": raise HTTPException(422,"이 데모 센서는 경기도 파주시만 지원합니다.")
     with db() as c:
         agent=row(c.execute("SELECT * FROM agents WHERE role='ANALYST' AND area=? AND lifecycle='PUBLISHED' ORDER BY updated_at DESC LIMIT 1",(body.area,)).fetchone())
-        if not agent: raise HTTPException(409,"게시된 파주시 분석 에이전트가 없습니다.")
+        if not agent: raise HTTPException(409,"게시된 파주시 분석 워크플로우가 없습니다.")
         payload=body.model_dump(); event_id=uid("SNS"); payload["event_id"]=event_id
         eid=create_execution(c,agent,payload,session_for("ANALYST"))
         c.execute("INSERT INTO sensor_events VALUES(?,?,?,?,?,?,?,?)",(event_id,body.sensor_id,body.type,body.area,body.object_count,body.confidence,eid,now()))
@@ -501,8 +501,8 @@ def decision(approval_id: str, body: DecisionIn, x_demo_role: str = Header(...))
                   "파주시 위협분석 보고" if kind=="REGIONAL" else "접경지역 종합상황 보고",e["area"],threat,content,eid,actor,now(),json.dumps(source_ids)))
         c.execute("UPDATE executions SET status='COMPLETED',updated_at=? WHERE id=?",(now(),eid))
         if kind=="COMMANDER":
-            c.execute("INSERT INTO notifications VALUES(?,?,?,?,?,?)",(uid("NTF"),"COMMANDER","지휘관 보고서 승인 완료",
-                      "새 접경지역 종합상황 보고서를 확인할 수 있습니다.",eid,now()))
+            c.execute("INSERT INTO notifications VALUES(?,?,?,?,?,?)",(uid("NTF"),"COMMANDER","새 지휘관 보고서 도착",
+                      "접경지역 종합상황 보고서가 승인되어 지휘관에게 전달되었습니다.",eid,now()))
         child=None
         if kind=="REGIONAL":
             event_id=uid("EVT")
