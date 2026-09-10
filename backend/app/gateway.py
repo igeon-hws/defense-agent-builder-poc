@@ -1,3 +1,5 @@
+"""실제 OpenAI 호출과 반복 가능한 결정론적 데모 응답을 제공한다."""
+
 from __future__ import annotations
 
 import json

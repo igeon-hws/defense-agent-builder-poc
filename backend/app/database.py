@@ -1,0 +1,99 @@
+"""SQLite 스키마 초기화, 간단한 마이그레이션과 데모 fixture 관리."""
+
+from __future__ import annotations
+
+import json
+
+from .core import DB_PATH, GATEWAY, db, now
+from .react_tools import default_react_definition
+from .workflow_service import graph
+
+
+def initialize_database():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with db() as c:
+        # CREATE IF NOT EXISTS를 사용해 기존 사용자의 데이터는 유지한다.
+        c.executescript("""
+        CREATE TABLE IF NOT EXISTS agents(id TEXT PRIMARY KEY, name TEXT, role TEXT, area TEXT, owner TEXT,
+          lifecycle TEXT, version INTEGER, definition TEXT, updated_at TEXT);
+        CREATE TABLE IF NOT EXISTS agent_versions(agent_id TEXT, version INTEGER, definition TEXT, published_at TEXT,
+          PRIMARY KEY(agent_id,version));
+        CREATE TABLE IF NOT EXISTS executions(id TEXT PRIMARY KEY, agent_id TEXT, agent_name TEXT, role TEXT,
+          area TEXT, version INTEGER, status TEXT, trigger_type TEXT, trigger TEXT, snapshot TEXT,
+          initiating_context TEXT, source_report_id TEXT, child_execution_id TEXT, created_at TEXT, updated_at TEXT);
+        CREATE TABLE IF NOT EXISTS trace(id INTEGER PRIMARY KEY AUTOINCREMENT, execution_id TEXT, node_id TEXT,
+          label TEXT, status TEXT, input_summary TEXT, output_summary TEXT, started_at TEXT, ended_at TEXT);
+        CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY, execution_id TEXT UNIQUE, reviewer_role TEXT,
+          status TEXT, draft TEXT, original_draft TEXT, decision TEXT, actor TEXT, comment TEXT, decided_at TEXT);
+        CREATE TABLE IF NOT EXISTS reports(id TEXT PRIMARY KEY, kind TEXT, title TEXT, area TEXT, threat TEXT,
+          content TEXT, source_execution_id TEXT UNIQUE, approved_by TEXT, approved_at TEXT,
+          source_report_ids TEXT, fixture INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS report_events(id TEXT PRIMARY KEY, report_id TEXT UNIQUE, status TEXT,
+          child_execution_id TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS notifications(id TEXT PRIMARY KEY, role TEXT, title TEXT, body TEXT,
+          execution_id TEXT, created_at TEXT, read_at TEXT);
+        CREATE TABLE IF NOT EXISTS sensor_events(id TEXT PRIMARY KEY, sensor_id TEXT, type TEXT, area TEXT,
+          object_count INTEGER, confidence REAL, execution_id TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS react_agents(id TEXT PRIMARY KEY, name TEXT, description TEXT, role TEXT, owner TEXT,
+          lifecycle TEXT, version INTEGER, definition TEXT, updated_at TEXT);
+        CREATE TABLE IF NOT EXISTS react_agent_runs(id TEXT PRIMARY KEY, react_agent_id TEXT, user_id TEXT, status TEXT,
+          prompt TEXT, answer TEXT, created_at TEXT, updated_at TEXT);
+        CREATE TABLE IF NOT EXISTS react_chat_sessions(id TEXT PRIMARY KEY, react_agent_id TEXT, user_id TEXT,
+          title TEXT, created_at TEXT, updated_at TEXT);
+        CREATE TABLE IF NOT EXISTS react_agent_events(id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, event_type TEXT,
+          title TEXT, content TEXT, tool_name TEXT, payload TEXT, created_at TEXT);
+        """)
+        # 별도 마이그레이션 도구 대신 필요한 컬럼만 안전하게 보강한다.
+        notification_columns={column["name"] for column in c.execute("PRAGMA table_info(notifications)")}
+        if "read_at" not in notification_columns:
+            c.execute("ALTER TABLE notifications ADD COLUMN read_at TEXT")
+        react_run_columns={column["name"] for column in c.execute("PRAGMA table_info(react_agent_runs)")}
+        if "session_id" not in react_run_columns:
+            c.execute("ALTER TABLE react_agent_runs ADD COLUMN session_id TEXT")
+        # 빈 DB에서만 기본 에이전트와 워크플로우를 생성한다.
+        if not c.execute("SELECT 1 FROM react_agents").fetchone():
+            definition=default_react_definition(GATEWAY.model)
+            c.execute("INSERT INTO react_agents VALUES(?,?,?,?,?,?,?,?,?)",
+                      ("react-paju-briefing","파주시 이상징후 조사 에이전트","작전 DB와 승인 보고서, 지역 정보를 조사해 지휘관 브리핑을 작성합니다.",
+                       "ANALYST","analyst.a12","PUBLISHED",1,json.dumps(definition,ensure_ascii=False),now()))
+        for saved_agent in c.execute("SELECT id,definition FROM react_agents").fetchall():
+            saved_definition=json.loads(saved_agent["definition"])
+            if "require_approval" in saved_definition:
+                saved_definition.pop("require_approval",None)
+                c.execute("UPDATE react_agents SET definition=? WHERE id=?",(json.dumps(saved_definition,ensure_ascii=False),saved_agent["id"]))
+        if not c.execute("SELECT 1 FROM agents").fetchone():
+            for agent_id, name, role, area, owner in [
+                ("analyst-a12", "파주 감시·위협분석 워크플로우", "ANALYST", "경기도 파주시", "analyst.a12"),
+                ("staff-synthesis", "접경지역 상황종합 워크플로우", "STAFF", "접경지역 전체", "staff.ops"),
+            ]:
+                c.execute("INSERT INTO agents VALUES(?,?,?,?,?,?,?,?,?)", (agent_id, name, role, area, owner,
+                          "PUBLISHED", 1, json.dumps(graph(role), ensure_ascii=False), now()))
+                c.execute("INSERT OR IGNORE INTO agent_versions VALUES(?,?,?,?)",
+                          (agent_id, 1, json.dumps(graph(role), ensure_ascii=False), now()))
+        if not c.execute("SELECT 1 FROM reports WHERE fixture=1").fetchone():
+            for rid, area, threat, content in [
+                ("RPT-B07-SEED", "경기도 연천군", "MEDIUM", "연천군 북부에서 반복 이동 징후가 식별되었습니다."),
+                ("RPT-C03-SEED", "강원특별자치도 철원군", "LOW", "철원군 일대는 특이 동향 없이 안정적입니다."),
+            ]:
+                c.execute("INSERT INTO reports VALUES(?,?,?,?,?,?,?,?,?,?,1)",
+                          (rid, "REGIONAL", f"{area} 지역 분석 보고", area, threat, content, None,
+                           "seed.system", now(), "[]"))
+        # 기존 데모 DB의 구조와 사용자 설정은 유지하고 표시용 기본 데이터만 새 명칭으로 이관한다.
+        for agent_id, name, area, owner, role in [
+            ("analyst-a12", "파주 감시·위협분석 워크플로우", "경기도 파주시", "analyst.a12", "ANALYST"),
+            ("staff-synthesis", "접경지역 상황종합 워크플로우", "접경지역 전체", "staff.ops", "STAFF"),
+        ]:
+            saved = c.execute("SELECT definition FROM agents WHERE id=?", (agent_id,)).fetchone()
+            if saved:
+                definition = graph(role)
+                c.execute("UPDATE agents SET name=?,area=?,owner=?,definition=? WHERE id=?",
+                          (name, area, owner, json.dumps(definition, ensure_ascii=False), agent_id))
+                current=c.execute("SELECT version,lifecycle FROM agents WHERE id=?",(agent_id,)).fetchone()
+                if current and current["lifecycle"]=="PUBLISHED":
+                    c.execute("INSERT OR IGNORE INTO agent_versions VALUES(?,?,?,?)",
+                              (agent_id,current["version"],json.dumps(definition,ensure_ascii=False),now()))
+        c.execute("UPDATE reports SET area='경기도 연천군',title='연천군 위협분석 보고',content='연천군 북부에서 반복 이동 징후가 식별되었습니다.' WHERE id='RPT-B07-SEED'")
+        c.execute("UPDATE reports SET area='강원특별자치도 철원군',title='철원군 위협분석 보고',content='철원군 일대는 특이 동향 없이 안정적입니다.' WHERE id='RPT-C03-SEED'")
+        c.execute("UPDATE reports SET area='경기도 파주시',title=replace(title,'A-12 지역','파주시') WHERE area='A-12'")
+        c.execute("UPDATE executions SET area='경기도 파주시' WHERE area='A-12'")
+        c.execute("UPDATE executions SET area='접경지역 전체' WHERE area='ALL'")

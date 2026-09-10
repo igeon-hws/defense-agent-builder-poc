@@ -1,3 +1,5 @@
+"""Builder JSON을 체크포인트 기반 LangGraph로 컴파일한다."""
+
 from __future__ import annotations
 
 import sqlite3
