@@ -33,7 +33,7 @@ Centered card, approximately 440px wide: title, prominent 'Demo / Mock Login' la
 
 ## Dashboard
 
-분석관과 참모 대시보드는 현재 역할·지역, 내 워크플로우, 운영 상태, 승인 대기 건수와 앱 내 알림을 보여준다. 최근 실행 목록은 표시하지 않는다. 승인 대기가 있으면 상단 강조 배너와 헤더 종 아이콘의 건수 배지를 표시한다.
+분석관과 참모 대시보드는 현재 역할·지역, 내 워크플로우, 운영 상태, 승인 대기 건수와 앱 내 알림을 보여준다. 최근 실행 목록은 표시하지 않는다. 승인 대기가 있으면 상단 강조 배너를 표시하고, 헤더 종 아이콘에는 읽지 않은 알림 건수를 표시한다. 사용자가 `승인 및 알림` 항목을 클릭하면 서버에 읽음 시각을 저장하고 항목을 `확인함` 상태로 전환한다. 승인 업무 자체는 승인 또는 반려할 때까지 계속 대기 상태로 유지한다.
 
 Analyst sees the 경기도 파주시 sensor simulator action and Analyst review queue. Staff sees new approved regional reports and Staff review queue. Commander sees final Commander reports with time/threat and a Situation Board link; creation and approval controls are absent. Every alert links to the corresponding execution or report.
 
@@ -114,7 +114,7 @@ Waiting state provides the same approval drawer. Refresh restores state from per
 
 역할·지역 범위와 실제 OpenStreetMap 지도를 표시한다. 파주시, 연천군, 철원군을 선택할 수 있고 분석관은 파주시만 본다. 일반 상황판에서는 지도 아래 승인 보고서를 열람할 수 있다. 지휘관 상황판은 승인 지역 보고서 목록 대신 최근 센서 이벤트와 클릭 가능한 최종 보고서 도착 알림을 표시한다. 고급 군사 GIS layer는 데모 범위에서 제외한다.
 
-보고서 클릭은 종류, 제목, 승인 내용, 승인자·시각과 원본 실행을 읽기 전용 상세로 연다. 참모는 승인된 지역 입력을 확인할 수 있다. 지휘관 상황판은 지도, 최근 센서 이벤트, 보고서 도착 알림을 보여주며 승인 지역 보고서 카드 목록은 표시하지 않는다. 참모 승인으로 최종 보고서가 전달되면 도착 알림을 만들고, 알림을 클릭하면 해당 COMMANDER 보고서 상세를 연다. 초안과 반려된 내용은 표시하지 않는다.
+보고서 클릭은 종류, 제목, 승인 내용, 승인자·시각과 원본 실행을 읽기 전용 상세로 연다. 참모는 승인된 지역 입력을 확인할 수 있다. 지휘관 상황판은 지도, 최근 센서 이벤트, 보고서 도착 알림을 보여주며 승인 지역 보고서 카드 목록은 표시하지 않는다. 참모 승인으로 최종 보고서가 전달되면 도착 알림을 만들고, 알림을 클릭하면 읽음 상태를 저장한 뒤 해당 COMMANDER 보고서 상세를 연다. 초안과 반려된 내용은 표시하지 않는다.
 
 ## Shared failure and accessibility behavior
 

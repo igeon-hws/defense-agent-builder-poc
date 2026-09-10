@@ -98,10 +98,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS report_events(id TEXT PRIMARY KEY, report_id TEXT UNIQUE, status TEXT,
           child_execution_id TEXT, created_at TEXT);
         CREATE TABLE IF NOT EXISTS notifications(id TEXT PRIMARY KEY, role TEXT, title TEXT, body TEXT,
-          execution_id TEXT, created_at TEXT);
+          execution_id TEXT, created_at TEXT, read_at TEXT);
         CREATE TABLE IF NOT EXISTS sensor_events(id TEXT PRIMARY KEY, sensor_id TEXT, type TEXT, area TEXT,
           object_count INTEGER, confidence REAL, execution_id TEXT, created_at TEXT);
         """)
+        notification_columns={column["name"] for column in c.execute("PRAGMA table_info(notifications)")}
+        if "read_at" not in notification_columns:
+            c.execute("ALTER TABLE notifications ADD COLUMN read_at TEXT")
         if not c.execute("SELECT 1 FROM agents").fetchone():
             for agent_id, name, role, area, owner in [
                 ("analyst-a12", "파주 감시·위협분석 워크플로우", "ANALYST", "경기도 파주시", "analyst.a12"),
@@ -195,7 +198,7 @@ def invoke_workflow(c, eid: str, agent: dict, trigger_payload: dict, resume: dic
                 c.execute("UPDATE executions SET status=?,updated_at=? WHERE id=?",
                           (f"WAITING_FOR_{role}_APPROVAL",now(),eid))
                 reviewer="분석관" if role=="ANALYST" else "참모"
-                c.execute("INSERT INTO notifications VALUES(?,?,?,?,?,?)",(uid("NTF"),role,f"{reviewer} 승인 요청",
+                c.execute("INSERT INTO notifications(id,role,title,body,execution_id,created_at) VALUES(?,?,?,?,?,?)",(uid("NTF"),role,f"{reviewer} 승인 요청",
                           "AI가 생성한 보고서 초안이 승인을 기다리고 있습니다.",eid,now()))
                 c.commit(); existing={"id":approval_id,"draft":draft}
             return {"approval_id":existing["id"],"reviewer_role":role,"draft":existing["draft"]}
@@ -443,7 +446,7 @@ def sensor_event(body: SensorEventIn, x_demo_role: str = Header(default="ANALYST
         payload=body.model_dump(); event_id=uid("SNS"); payload["event_id"]=event_id
         eid=create_execution(c,agent,payload,session_for("ANALYST"))
         c.execute("INSERT INTO sensor_events VALUES(?,?,?,?,?,?,?,?)",(event_id,body.sensor_id,body.type,body.area,body.object_count,body.confidence,eid,now()))
-        c.execute("INSERT INTO notifications VALUES(?,?,?,?,?,?)",(uid("NTF"),"COMMANDER","파주시 센서 이벤트",
+        c.execute("INSERT INTO notifications(id,role,title,body,execution_id,created_at) VALUES(?,?,?,?,?,?)",(uid("NTF"),"COMMANDER","파주시 센서 이벤트",
                   f"{body.type} · 탐지 {body.object_count}개 · 신뢰도 {body.confidence:.2f}",eid,now()))
         status=c.execute("SELECT status FROM executions WHERE id=?",(eid,)).fetchone()[0]
         return {"event_id":event_id,"execution_id":eid,"status":status}
@@ -501,7 +504,7 @@ def decision(approval_id: str, body: DecisionIn, x_demo_role: str = Header(...))
                   "파주시 위협분석 보고" if kind=="REGIONAL" else "접경지역 종합상황 보고",e["area"],threat,content,eid,actor,now(),json.dumps(source_ids)))
         c.execute("UPDATE executions SET status='COMPLETED',updated_at=? WHERE id=?",(now(),eid))
         if kind=="COMMANDER":
-            c.execute("INSERT INTO notifications VALUES(?,?,?,?,?,?)",(uid("NTF"),"COMMANDER","새 지휘관 보고서 도착",
+            c.execute("INSERT INTO notifications(id,role,title,body,execution_id,created_at) VALUES(?,?,?,?,?,?)",(uid("NTF"),"COMMANDER","새 지휘관 보고서 도착",
                       "접경지역 종합상황 보고서가 승인되어 지휘관에게 전달되었습니다.",eid,now()))
         child=None
         if kind=="REGIONAL":
@@ -528,7 +531,25 @@ def dashboard(role: str):
         pending=c.execute("SELECT count(*) FROM approvals WHERE reviewer_role=? AND status='PENDING'",(role,)).fetchone()[0]
         active=c.execute("SELECT count(*) FROM executions WHERE status NOT IN ('COMPLETED','REJECTED','FAILED')").fetchone()[0]
         notes=[row(r) for r in c.execute("SELECT * FROM notifications WHERE role=? ORDER BY created_at DESC LIMIT 5",(role,))]
-        return {"agent_count":agents,"pending_count":pending,"active_count":active,"notifications":notes}
+        unread_query="SELECT count(*) FROM notifications WHERE role=? AND read_at IS NULL"
+        unread_params: tuple[Any,...]=(role,)
+        if role=="COMMANDER":
+            unread_query+=" AND title='새 지휘관 보고서 도착'"
+        unread=c.execute(unread_query,unread_params).fetchone()[0]
+        return {"agent_count":agents,"pending_count":pending,"active_count":active,"unread_count":unread,"notifications":notes}
+
+
+@app.post("/api/notifications/{notification_id}/read")
+def read_notification(notification_id: str, x_demo_role: str = Header(...)):
+    if x_demo_role not in {"ANALYST","STAFF","COMMANDER"}:
+        raise HTTPException(403,"알림을 확인할 권한이 없습니다.")
+    with db() as c:
+        notification=c.execute("SELECT * FROM notifications WHERE id=? AND role=?",(notification_id,x_demo_role)).fetchone()
+        if not notification:
+            raise HTTPException(404,"알림을 찾을 수 없습니다.")
+        read_at=notification["read_at"] or now()
+        c.execute("UPDATE notifications SET read_at=? WHERE id=?",(read_at,notification_id))
+        return {"id":notification_id,"status":"READ","read_at":read_at}
 
 @app.get("/api/situation-board")
 def situation_board(role: str):
