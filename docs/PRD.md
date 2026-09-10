@@ -10,7 +10,7 @@ These documents translate the retrieved planning pages and the user's explicit s
 
 Build a **1-week seminar demo** for a roughly 40-minute presentation, with about 11 minutes for the live demo. Show that users can compose role-specific workflows in one shared Workflow Builder, run them, review AI output, and connect workflows through approved reports.
 
-The visual focus is the Workflow Builder, not the Situation Board. Both Analyst and Staff use the same Builder / Registry / Runtime with different definitions, triggers, capabilities and reviewers.
+The visual focus is the Workflow Builder and the separate ReAct Agent Builder, not the Situation Board. Both Analyst and Staff use role-scoped builders and registries. Workflows execute declared edges; agents select among connected tools to achieve a user goal.
 
 Required stack: React + TypeScript + React Flow frontend; FastAPI + LangGraph + SQLite backend/runtime. Actual demo reasoning uses an external LLM through a Model Gateway/provider abstraction. Future local models require a provider implementation, not a workflow redesign; local serving is out of scope.
 
@@ -44,11 +44,21 @@ Workflow Registry는 현재 세션의 사용자 ID를 기준으로 소유 워크
 7. Show actual node execution status, input/output summaries, timing, errors and approvals inside Builder and in a dedicated Execution view. Refresh must recover waiting executions from backend state.
 8. Situation Board shows an OpenStreetMap base map for 경기도 파주시, 경기도 연천군 and 강원특별자치도 철원군 together with recent events and approved reports. Notifications stay inside the application.
 
+## ReAct 에이전트 첫 구현
+
+워크플로우와 별도로 에이전트 빌더와 에이전트 레지스트리를 제공한다. 사용자는 에이전트에 허용할 외부 시스템·기능 도구, 모델, 시스템 프롬프트와 최대 반복 횟수를 설정하고 게시한다. 게시된 에이전트는 레지스트리에서 채팅 화면으로 열 수 있다.
+
+기본 시나리오는 “파주시 최근 이상 징후를 조사하고 지휘관 브리핑을 작성해줘”이다. ReAct 런타임은 모델에게 매 반복의 다음 행동을 선택하게 하고, 선택된 작전 DB 조회·기존 보고서 검색·지역 정보 조회·근거 종합 결과를 다시 관찰로 제공한다. 연결된 도구 전체나 고정 순서를 강제하지 않으며, 현재 요청과 대화 컨텍스트만으로 답할 수 있으면 도구 호출 없이 완료할 수 있다. 런타임은 허용 목록, 중복 호출과 종합 도구의 최소 입력 계약만 검증한다. 화면은 비공개 chain-of-thought가 아니라 공개 가능한 판단 요약, 선택한 도구, 관찰 결과와 최종 응답 청크를 스트리밍하고 분석 완료 상태로 종료한다. 에이전트 HITL은 후속 범위다.
+
+에이전트 채팅은 사용자별·에이전트별 세션으로 저장한다. 같은 세션의 후속 요청에는 최근 완료 대화 3턴만 모델 컨텍스트로 전달하고, 새 대화에서는 이전 컨텍스트를 사용하지 않는다. 사용자는 세션을 선택해 대화를 복원하거나 새로 만들고 삭제할 수 있다.
+
+첫 구현의 외부 시스템은 SQLite 데이터와 명시적으로 표시된 mock 어댑터다. 실제 MCP 서버 연결, 임의 도구 등록, 장기 메모리와 다중 에이전트 협업은 후속 범위다.
+
 ## Scope boundaries
 
 | Treatment | Components |
 | --- | --- |
-| Implement | Builder, definition validation/compilation, Registry, external LLM + Gateway, LangGraph runtime, durable checkpoints, HITL, report persistence/event linkage, trace |
+| Implement | Workflow Builder/Registry, ReAct Agent Builder/Registry/Chat, external LLM + Gateway, LangGraph workflow runtime, agent step and result streaming, workflow HITL, report persistence/event linkage, trace |
 | Mock | Login/permission data, Sensor Simulator, Data Fabric Search/Query, Situation Context, external regional report fixtures |
 | Minimal | Static role filtering, in-app notifications, report viewer, Situation Board, Commander read-only view, audit history |
 | Excluded unless explicitly requested | Kafka/message broker, Kubernetes, advanced military GIS layers, real Data Fabric, real sensors, production auth, full RBAC/ABAC, local-model serving |

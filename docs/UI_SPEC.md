@@ -12,6 +12,8 @@ Desktop-first internal platform, optimized for a 1440×900 presentation display 
 | Dashboard | /dashboard | 분석관·참모 요약; 지휘관에게는 상황판 단일 메뉴로 표시 |
 | Workflow Builder | /builder and /agents/:id/builder (new draft via Dashboard/Registry) | Analyst/Staff own role workflows |
 | Workflow Registry | /agents | Analyst/Staff role-filtered workflows |
+| ReAct Agent Builder | /react-agent-builder and /react-agents/:id/builder | Analyst/Staff owned agents |
+| Agent Registry / Chat | /react-agents and /react-agents/:id/chat | Analyst/Staff owned agents and runs |
 | Execution | /executions and /executions/:id | Role/area-filtered executions |
 | Situation Board | /situation | 분석관·참모; 지휘관 접근은 /dashboard 상황판으로 이동 |
 | 센서 입력 | /sensor | Analyst; 좌측 기본 메뉴의 가장 아래 |
@@ -95,6 +97,12 @@ Top: role/area label, search, lifecycle/trigger filter and Create Workflow. Belo
 Create Workflow opens a modal with Workflow name, description, role, monitoring area and starting point (Blank, Analyst template or Staff template). Role controls the available templates and node palette. Submit creates a DRAFT and navigates to its Builder. A blank Workflow has no nodes or edges and cannot publish until validation passes. The Builder navigation item opens the current role's most recently edited draft, or the creation modal when none exists.
 
 Publishing shows a concise validation summary and creates an immutable numbered version. Registry actions clearly distinguish `초안 편집`, `게시 버전 보기`, `시험 실행` and `게시`. A published Workflow can be used by the sensor/report subscriptions immediately; later canvas edits remain in the draft until another version is published.
+
+## ReAct 에이전트 빌더·레지스트리·채팅
+
+에이전트 빌더는 좌측에 연결 가능한 시스템과 기능, 중앙에 `사용자 목표 → ReAct 런타임 ↔ 연결 도구` 그래프, 우측에 이름·설명·모델·시스템 프롬프트와 최대 반복 횟수를 표시한다. 도구 카드를 누르면 연결 상태와 그래프가 함께 바뀐다. 저장은 DRAFT, 게시는 실행 가능한 버전을 만든다.
+
+에이전트 레지스트리는 이름, 역할, 연결 도구 수, 반복 제한, 상태와 버전을 보여주고 빌더 또는 실행 화면으로 이동한다. 채팅 화면 왼쪽에는 사용자별 세션 목록, 새 대화와 삭제 기능을 제공하며 최근 3턴이 컨텍스트로 사용됨을 표시한다. 세션을 선택하면 저장된 사용자 요청과 답변을 복원한다. 실행 전에는 입력 중인 프롬프트를 대화 기록에 표시하지 않는다. 실행을 누른 시점의 요청과 스트리밍 브리핑을 중앙에 표시하고, 오른쪽에는 공개 가능한 판단 요약과 도구 관찰을 시간순으로 표시한다. 내부 chain-of-thought라는 표현을 사용하지 않으며 실행 중 입력 중복 제출과 세션 전환을 막는다.
 
 ## HITL approval drawer
 

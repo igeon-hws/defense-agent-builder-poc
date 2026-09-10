@@ -16,6 +16,10 @@ React / TypeScript / React Flow
 
 Use one backend process and SQLite. Separate modules and interfaces, not deployable services. Builder JSON stays independent of LangGraph classes. AI nodes call the Gateway, never vendor SDKs directly. A simple in-process event dispatcher backed by persisted pending events is sufficient; no Kafka, worker fleet or message broker.
 
+ReAct 에이전트는 워크플로우 정의와 분리된 `react_agents` 정의를 사용한다. 정의에는 모델, 시스템 프롬프트, 최대 반복 횟수와 허용 도구 ID만 저장한다. `react_chat_sessions`가 사용자별 대화 경계를 저장하고 `react_agent_runs`와 `react_agent_events`가 요청, 단계별 공개 이벤트와 최종 결과를 저장한다. 실행 API는 NDJSON으로 요청 접수, 판단 요약, 도구 관찰, 응답 청크와 완료 이벤트를 순서대로 스트리밍한다. 같은 세션의 최근 완료 3턴을 `conversation_context`로 모델에 전달하며 세션 간에는 컨텍스트를 공유하지 않는다. 에이전트 실행의 HITL은 첫 구현에서 제외한다.
+
+모델은 매 반복에서 다음 도구 또는 FINAL을 구조화 출력으로 선택한다. 런타임은 연결된 모든 도구의 실행이나 순서를 강제하지 않고 모델의 선택을 그대로 실행한다. 현재 요청과 최근 대화만으로 답할 수 있으면 첫 반복에도 FINAL이 가능하다. 런타임은 허용 목록, 5~8회 반복 제한, 동일 도구 중복 호출 방지와 근거 종합의 최소 입력 계약만 검증한다. 기본 도구는 작전 DB 조회, 승인 보고서 검색, 지역 정보 조회와 근거 종합이며 현재 모두 로컬 SQLite 또는 mock 어댑터다. 실제 MCP transport는 아직 연결하지 않으며 이후 같은 도구 인터페이스에 어댑터로 추가한다.
+
 ## Workflow Definition and compilation
 
 Workflow Definition JSON은 schema_version, 설명, 모델 설정, 노드와 edge를 저장한다. 노드는 id, type, label, group, config, position을 가지며 edge는 source와 target을 가진다. 실행 가능한 Python 코드나 API credential은 Definition에 저장하지 않는다.
@@ -73,6 +77,8 @@ Minimum logical records (tables can be simplified while retaining these invarian
 | report_events | Event ID, regional report ID, type APPROVED_REPORT_CREATED, pending/dispatched status |
 | execution_trace / audit | Ordered node transitions and review/report events with correlation IDs |
 | sensor_events | Simulator payload and processing outcome |
+| react_agents / react_chat_sessions / react_agent_runs | ReAct 설정, 소유자, 사용자별 채팅 세션, 사용자 목표와 최종 상태 |
+| react_agent_events | 공개 가능한 판단·도구 관찰 스트림과 최종 브리핑 완료 이벤트 |
 
 Only approved content enters the reports collection; drafts live in runtime/approval state. Send Report commits a REGIONAL report and its pending event in one SQLite transaction. The dispatcher reads the committed report and creates the Staff execution with a uniqueness constraint on (event_id, target_agent_id, target_version). Mark dispatched only after execution creation succeeds; recover pending items on startup. Duplicate notification delivery therefore cannot create a second Staff run. Use a unique finalized report key per execution/output to guard replay.
 

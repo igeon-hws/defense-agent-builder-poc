@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langgraph.types import Command
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -55,6 +57,19 @@ STAFF_NODES = [
     ("context", "접경지역 작전상황 조회", "data"), ("synthesis", "위협 종합·초안 생성", "ai"),
     ("approval", "참모 검토·승인", "control"), ("send", "지휘관 보고서 발행", "action"),
 ]
+
+REACT_TOOLS = [
+    {"id":"query_operational_db","name":"작전 DB 조회","kind":"database","description":"최근 파주시 센서 관측과 이상 징후를 조회합니다."},
+    {"id":"search_reports","name":"기존 보고서 검색","kind":"search","description":"승인 보고서와 과거 파주시 분석 자료를 검색합니다."},
+    {"id":"lookup_region_info","name":"지역 정보 조회","kind":"context","description":"파주시 지형·기상·접경지역 맥락을 조회합니다."},
+    {"id":"synthesize_evidence","name":"근거 종합","kind":"function","description":"수집한 근거를 지휘관 브리핑 초안으로 정리합니다."},
+]
+
+
+def default_react_definition() -> dict[str, Any]:
+    return {"schema_version":"1","system_prompt":"파주시 작전 정보를 조사하는 국방 분석 에이전트입니다. 근거를 먼저 수집하고 간결한 한국어 지휘관 브리핑을 작성하세요.",
+            "model":{"provider":"openai","model_id":GATEWAY.model},"max_iterations":6,
+            "tools":[tool["id"] for tool in REACT_TOOLS]}
 
 
 def graph(role: str) -> dict[str, Any]:
@@ -101,10 +116,31 @@ def init_db():
           execution_id TEXT, created_at TEXT, read_at TEXT);
         CREATE TABLE IF NOT EXISTS sensor_events(id TEXT PRIMARY KEY, sensor_id TEXT, type TEXT, area TEXT,
           object_count INTEGER, confidence REAL, execution_id TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS react_agents(id TEXT PRIMARY KEY, name TEXT, description TEXT, role TEXT, owner TEXT,
+          lifecycle TEXT, version INTEGER, definition TEXT, updated_at TEXT);
+        CREATE TABLE IF NOT EXISTS react_agent_runs(id TEXT PRIMARY KEY, react_agent_id TEXT, user_id TEXT, status TEXT,
+          prompt TEXT, answer TEXT, created_at TEXT, updated_at TEXT);
+        CREATE TABLE IF NOT EXISTS react_chat_sessions(id TEXT PRIMARY KEY, react_agent_id TEXT, user_id TEXT,
+          title TEXT, created_at TEXT, updated_at TEXT);
+        CREATE TABLE IF NOT EXISTS react_agent_events(id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, event_type TEXT,
+          title TEXT, content TEXT, tool_name TEXT, payload TEXT, created_at TEXT);
         """)
         notification_columns={column["name"] for column in c.execute("PRAGMA table_info(notifications)")}
         if "read_at" not in notification_columns:
             c.execute("ALTER TABLE notifications ADD COLUMN read_at TEXT")
+        react_run_columns={column["name"] for column in c.execute("PRAGMA table_info(react_agent_runs)")}
+        if "session_id" not in react_run_columns:
+            c.execute("ALTER TABLE react_agent_runs ADD COLUMN session_id TEXT")
+        if not c.execute("SELECT 1 FROM react_agents").fetchone():
+            definition=default_react_definition()
+            c.execute("INSERT INTO react_agents VALUES(?,?,?,?,?,?,?,?,?)",
+                      ("react-paju-briefing","파주시 이상징후 조사 에이전트","작전 DB와 승인 보고서, 지역 정보를 조사해 지휘관 브리핑을 작성합니다.",
+                       "ANALYST","analyst.a12","PUBLISHED",1,json.dumps(definition,ensure_ascii=False),now()))
+        for saved_agent in c.execute("SELECT id,definition FROM react_agents").fetchall():
+            saved_definition=json.loads(saved_agent["definition"])
+            if "require_approval" in saved_definition:
+                saved_definition.pop("require_approval",None)
+                c.execute("UPDATE react_agents SET definition=? WHERE id=?",(json.dumps(saved_definition,ensure_ascii=False),saved_agent["id"]))
         if not c.execute("SELECT 1 FROM agents").fetchone():
             for agent_id, name, role, area, owner in [
                 ("analyst-a12", "파주 감시·위협분석 워크플로우", "ANALYST", "경기도 파주시", "analyst.a12"),
@@ -146,7 +182,7 @@ def init_db():
 def row(r):
     if not r: return None
     d = dict(r)
-    for key in ("definition", "trigger", "snapshot", "initiating_context", "source_report_ids"):
+    for key in ("definition", "trigger", "snapshot", "initiating_context", "source_report_ids", "payload"):
         if key in d and d[key]:
             try: d[key] = json.loads(d[key])
             except Exception: pass
@@ -294,6 +330,10 @@ class AgentCreateIn(BaseModel):
     role: Literal["ANALYST","STAFF"]
     area: str
     template: Literal["BLANK","ANALYST","STAFF"] = "BLANK"
+class ReactAgentCreateIn(BaseModel): name: str; description: str = ""
+class ReactAgentIn(BaseModel): name: str; description: str = ""; definition: dict[str, Any]
+class ReactSessionCreateIn(BaseModel): title: str = "새 대화"
+class ReactRunIn(BaseModel): prompt: str; session_id: str
 class DecisionIn(BaseModel): decision: Literal["APPROVE","EDIT_APPROVE","REJECT"]; content: str | None = None; comment: str | None = None
 class SensorEventIn(BaseModel):
     sensor_id: str = "파주-감시센서-03"
@@ -523,6 +563,259 @@ def reports(role: str):
         if role=="ANALYST": q+=" WHERE area='경기도 파주시'"
         elif role=="COMMANDER": q+=" WHERE kind IN ('REGIONAL','COMMANDER')"
         return [row(r) for r in c.execute(q+" ORDER BY approved_at DESC")]
+
+
+def require_react_agent(agent: dict[str, Any] | None, role: str):
+    if not agent: raise HTTPException(404,"에이전트를 찾을 수 없습니다.")
+    if agent["role"] != role or agent["owner"] != session_for(role)["user_id"]:
+        raise HTTPException(403,"본인 소유 에이전트만 사용할 수 있습니다.")
+
+
+def save_react_event(run_id: str, event_type: str, title: str, content: str,
+                     tool_name: str | None = None, payload: Any = None) -> dict[str, Any]:
+    created_at=now()
+    with db() as c:
+        cursor=c.execute("INSERT INTO react_agent_events(run_id,event_type,title,content,tool_name,payload,created_at) VALUES(?,?,?,?,?,?,?)",
+                         (run_id,event_type,title,content,tool_name,json.dumps(payload,ensure_ascii=False) if payload is not None else None,created_at))
+        event_id=cursor.lastrowid
+    return {"id":event_id,"run_id":run_id,"type":event_type,"title":title,"content":content,
+            "tool_name":tool_name,"payload":payload,"created_at":created_at}
+
+
+def execute_react_tool(tool_name: str, observations: list[dict[str, Any]]) -> dict[str, Any]:
+    if tool_name == "query_operational_db":
+        with db() as c:
+            records=[dict(item) for item in c.execute("SELECT sensor_id,type,area,object_count,confidence,created_at FROM sensor_events WHERE area='경기도 파주시' ORDER BY created_at DESC LIMIT 5")]
+        if not records:
+            records=[
+                {"sensor_id":"파주-감시센서-03","type":"이동체 감지","area":"경기도 파주시","object_count":4,"confidence":.94,"created_at":"최근 30분"},
+                {"sensor_id":"파주-열상센서-07","type":"열원 감지","area":"경기도 파주시","object_count":2,"confidence":.87,"created_at":"최근 2시간"},
+            ]
+        return {"source":"모의 작전 DB","records":records,"summary":f"파주시 최근 센서 관측 {len(records)}건을 확인했습니다."}
+    if tool_name == "search_reports":
+        with db() as c:
+            records=[dict(item) for item in c.execute("SELECT id,title,area,threat,content,approved_at FROM reports WHERE area='경기도 파주시' ORDER BY approved_at DESC LIMIT 4")]
+        if not records:
+            records=[{"id":"RPT-PJU-HIST-01","title":"파주시 북부 감시 동향","area":"경기도 파주시","threat":"MEDIUM",
+                      "content":"최근 7일간 야간 이동 징후가 간헐적으로 증가했습니다.","approved_at":"데모 과거자료"}]
+        return {"source":"승인 보고서 저장소","records":records,"summary":f"관련 승인·과거 보고서 {len(records)}건을 찾았습니다."}
+    if tool_name == "lookup_region_info":
+        return {"source":"모의 지역정보 시스템","area":"경기도 파주시","terrain":"임진강과 접경 산악·평야가 혼재",
+                "weather":"야간 저시정, 북동풍","operational_note":"민간 접근로와 감시 취약 구간을 함께 고려해야 합니다.",
+                "summary":"파주시 접경 지형과 현재 작전 맥락을 확인했습니다."}
+    if tool_name == "synthesize_evidence":
+        sensor=next((item["result"] for item in observations if item["tool"]=="query_operational_db"),{})
+        reports_found=next((item["result"] for item in observations if item["tool"]=="search_reports"),{})
+        region=next((item["result"] for item in observations if item["tool"]=="lookup_region_info"),{})
+        sensor_count=len(sensor.get("records",[])); report_count=len(reports_found.get("records",[]))
+        briefing=("[파주시 최근 이상 징후 지휘관 브리핑]\n\n"
+                  f"1. 상황: 최근 파주시 센서 관측 {sensor_count}건과 관련 보고서 {report_count}건을 확인했습니다. "
+                  "이동체 및 열원 징후가 과거 야간 이동 증가 패턴과 일부 일치합니다.\n\n"
+                  f"2. 판단: {region.get('terrain','접경 지형')}과 {region.get('weather','현재 기상')}을 고려할 때 추가 확인이 필요한 중간 수준 징후입니다.\n\n"
+                  "3. 권고: 파주시 북부 감시 자산을 유지하고 동일 구간의 후속 센서 관측과 기존 보고 간 상관성을 재확인하십시오.\n\n"
+                  "※ 본 결과는 세미나용 모의 데이터를 사용했습니다.")
+        return {"source":"근거 종합 기능","evidence_count":sensor_count+report_count+1,"briefing":briefing,
+                "summary":"수집한 근거를 지휘관 브리핑 초안으로 종합했습니다."}
+    raise ValueError(f"지원하지 않는 도구입니다: {tool_name}")
+
+
+@app.get("/api/react-tools")
+def react_tools(x_demo_role: str = Header(...)):
+    if x_demo_role not in {"ANALYST","STAFF"}: raise HTTPException(403,"에이전트 도구를 사용할 권한이 없습니다.")
+    return REACT_TOOLS
+
+
+@app.get("/api/react-agents")
+def react_agents(role: str, x_demo_role: str = Header(...)):
+    if role != x_demo_role or role not in {"ANALYST","STAFF"}: raise HTTPException(403,"에이전트 레지스트리에 접근할 권한이 없습니다.")
+    with db() as c:
+        return [row(item) for item in c.execute("SELECT * FROM react_agents WHERE role=? AND owner=? ORDER BY updated_at DESC",
+                                                (role,session_for(role)["user_id"]))]
+
+
+@app.post("/api/react-agents")
+def create_react_agent(body: ReactAgentCreateIn, x_demo_role: str = Header(...)):
+    if x_demo_role not in {"ANALYST","STAFF"}: raise HTTPException(403,"에이전트를 만들 권한이 없습니다.")
+    agent_id=uid("RAG").lower(); definition=default_react_definition()
+    with db() as c:
+        c.execute("INSERT INTO react_agents VALUES(?,?,?,?,?,?,?,?,?)",
+                  (agent_id,body.name.strip() or "새 조사 에이전트",body.description,x_demo_role,session_for(x_demo_role)["user_id"],
+                   "DRAFT",0,json.dumps(definition,ensure_ascii=False),now()))
+    return {"id":agent_id}
+
+
+@app.get("/api/react-agents/{agent_id}")
+def get_react_agent(agent_id: str, x_demo_role: str = Header(...)):
+    with db() as c: agent=row(c.execute("SELECT * FROM react_agents WHERE id=?",(agent_id,)).fetchone())
+    require_react_agent(agent,x_demo_role)
+    return agent
+
+
+@app.put("/api/react-agents/{agent_id}")
+def save_react_agent(agent_id: str, body: ReactAgentIn, x_demo_role: str = Header(...)):
+    with db() as c:
+        agent=row(c.execute("SELECT * FROM react_agents WHERE id=?",(agent_id,)).fetchone()); require_react_agent(agent,x_demo_role)
+        allowed={tool["id"] for tool in REACT_TOOLS}; selected=body.definition.get("tools",[])
+        if not selected or any(tool not in allowed for tool in selected): raise HTTPException(422,"지원되는 도구를 하나 이상 연결해야 합니다.")
+        body.definition["max_iterations"]=max(5,min(8,int(body.definition.get("max_iterations",6))))
+        body.definition.pop("require_approval",None)
+        c.execute("UPDATE react_agents SET name=?,description=?,definition=?,lifecycle='DRAFT',updated_at=? WHERE id=?",
+                  (body.name,body.description,json.dumps(body.definition,ensure_ascii=False),now(),agent_id))
+    return {"saved":True,"lifecycle":"DRAFT"}
+
+
+@app.post("/api/react-agents/{agent_id}/publish")
+def publish_react_agent(agent_id: str, x_demo_role: str = Header(...)):
+    with db() as c:
+        agent=row(c.execute("SELECT * FROM react_agents WHERE id=?",(agent_id,)).fetchone()); require_react_agent(agent,x_demo_role)
+        version=int(agent["version"])+1
+        c.execute("UPDATE react_agents SET lifecycle='PUBLISHED',version=?,updated_at=? WHERE id=?",(version,now(),agent_id))
+    return {"published":True,"version":version}
+
+
+@app.delete("/api/react-agents/{agent_id}")
+def delete_react_agent(agent_id: str, x_demo_role: str = Header(...)):
+    if agent_id=="react-paju-briefing": raise HTTPException(409,"기본 제공 에이전트는 삭제할 수 없습니다.")
+    with db() as c:
+        agent=row(c.execute("SELECT * FROM react_agents WHERE id=?",(agent_id,)).fetchone()); require_react_agent(agent,x_demo_role)
+        c.execute("DELETE FROM react_agents WHERE id=?",(agent_id,))
+    return {"deleted":True}
+
+
+@app.get("/api/react-agents/{agent_id}/sessions")
+def list_react_sessions(agent_id: str, x_demo_role: str = Header(...)):
+    with db() as c:
+        agent=row(c.execute("SELECT * FROM react_agents WHERE id=?",(agent_id,)).fetchone()); require_react_agent(agent,x_demo_role)
+        user_id=session_for(x_demo_role)["user_id"]
+        sessions=[row(item) for item in c.execute(
+            "SELECT s.*,count(r.id) AS turn_count FROM react_chat_sessions s "
+            "LEFT JOIN react_agent_runs r ON r.session_id=s.id AND r.status='COMPLETED' "
+            "WHERE s.react_agent_id=? AND s.user_id=? GROUP BY s.id ORDER BY s.updated_at DESC",
+            (agent_id,user_id))]
+    return sessions
+
+
+@app.post("/api/react-agents/{agent_id}/sessions")
+def create_react_session(agent_id: str, body: ReactSessionCreateIn, x_demo_role: str = Header(...)):
+    with db() as c:
+        agent=row(c.execute("SELECT * FROM react_agents WHERE id=?",(agent_id,)).fetchone()); require_react_agent(agent,x_demo_role)
+        session_id=uid("CHAT"); timestamp=now()
+        c.execute("INSERT INTO react_chat_sessions VALUES(?,?,?,?,?,?)",
+                  (session_id,agent_id,session_for(x_demo_role)["user_id"],body.title.strip() or "새 대화",timestamp,timestamp))
+    return {"id":session_id,"title":body.title.strip() or "새 대화","turn_count":0,"created_at":timestamp,"updated_at":timestamp}
+
+
+@app.get("/api/react-agents/{agent_id}/sessions/{session_id}")
+def get_react_session(agent_id: str, session_id: str, x_demo_role: str = Header(...)):
+    with db() as c:
+        agent=row(c.execute("SELECT * FROM react_agents WHERE id=?",(agent_id,)).fetchone()); require_react_agent(agent,x_demo_role)
+        user_id=session_for(x_demo_role)["user_id"]
+        chat_session=row(c.execute("SELECT * FROM react_chat_sessions WHERE id=? AND react_agent_id=? AND user_id=?",
+                                   (session_id,agent_id,user_id)).fetchone())
+        if not chat_session: raise HTTPException(404,"채팅 세션을 찾을 수 없습니다.")
+        messages=[row(item) for item in c.execute(
+            "SELECT id,prompt,answer,status,created_at FROM react_agent_runs WHERE session_id=? ORDER BY created_at",(session_id,))]
+    return {**chat_session,"messages":messages,"context_window":3}
+
+
+@app.delete("/api/react-agents/{agent_id}/sessions/{session_id}")
+def delete_react_session(agent_id: str, session_id: str, x_demo_role: str = Header(...)):
+    with db() as c:
+        agent=row(c.execute("SELECT * FROM react_agents WHERE id=?",(agent_id,)).fetchone()); require_react_agent(agent,x_demo_role)
+        user_id=session_for(x_demo_role)["user_id"]
+        chat_session=c.execute("SELECT 1 FROM react_chat_sessions WHERE id=? AND react_agent_id=? AND user_id=?",
+                               (session_id,agent_id,user_id)).fetchone()
+        if not chat_session: raise HTTPException(404,"채팅 세션을 찾을 수 없습니다.")
+        run_ids=[item["id"] for item in c.execute("SELECT id FROM react_agent_runs WHERE session_id=?",(session_id,))]
+        if run_ids:
+            placeholders=",".join("?" for _ in run_ids)
+            c.execute(f"DELETE FROM react_agent_events WHERE run_id IN ({placeholders})",run_ids)
+        c.execute("DELETE FROM react_agent_runs WHERE session_id=?",(session_id,))
+        c.execute("DELETE FROM react_chat_sessions WHERE id=?",(session_id,))
+    return {"deleted":True}
+
+
+def react_stream(agent: dict[str, Any], prompt: str, run_id: str, conversation_context: list[dict[str, str]]):
+    definition=agent["definition"]; enabled=definition.get("tools",[]); max_iterations=max(5,min(8,int(definition.get("max_iterations",6))))
+    observations: list[dict[str,Any]]=[]
+    tool_catalog=[{"id":tool["id"],"name":tool["name"],"description":tool["description"]} for tool in REACT_TOOLS if tool["id"] in enabled]
+    yield json.dumps(save_react_event(run_id,"run_started","요청 접수",prompt,
+                                      payload={"run_id":run_id,"context_turns":len(conversation_context),"context_window":3}),ensure_ascii=False)+"\n"
+    try:
+        for iteration in range(1,max_iterations+1):
+            decision=GATEWAY.structured(name="react_next_action",model=definition.get("model",{}).get("model_id"),
+                instructions=(definition.get("system_prompt","")+"\n사용자의 목표를 달성하기 위해 허용된 도구 중 다음 행동 하나를 선택하세요. "
+                              "thought_summary에는 사용자에게 공개 가능한 짧은 판단 근거만 작성하고 내부 사고 과정은 작성하지 마세요. "
+                              "conversation_context에는 같은 채팅 세션의 최근 대화가 있으며, 현재 요청을 해석할 때만 참고하세요. "
+                              "현재 요청에 필요한 도구만 선택하고, 컨텍스트나 이미 수집한 관찰만으로 답할 수 있으면 즉시 FINAL을 선택하세요. "
+                              "모든 도구를 사용할 필요는 없으며 같은 도구를 반복 호출하지 마세요. 근거 종합은 조회된 근거가 있을 때만 사용하세요."),
+                payload={"goal":prompt,"conversation_context":conversation_context,"available_tools":tool_catalog,
+                         "iteration":iteration,"observations":observations},
+                schema={"type":"object","additionalProperties":False,"properties":{
+                    "thought_summary":{"type":"string"},"action":{"type":"string","enum":[*enabled,"FINAL"]},
+                    "action_input":{"type":"string"},"final_answer":{"type":"string"}},
+                    "required":["thought_summary","action","action_input","final_answer"]})
+            action=decision.get("action","FINAL")
+            completed_tools={item["tool"] for item in observations if item.get("tool") in enabled}
+            yield json.dumps(save_react_event(run_id,"reasoning","판단 요약",decision.get("thought_summary","다음 행동을 선택했습니다."),
+                                              payload={"iteration":iteration,"action":action}),ensure_ascii=False)+"\n"
+            time.sleep(.15)
+            if action=="FINAL":
+                answer=decision.get("final_answer") or next((item["result"].get("briefing") for item in reversed(observations) if item["result"].get("briefing")),"조사를 완료했습니다.")
+                for chunk in [answer[i:i+45] for i in range(0,len(answer),45)]:
+                    yield json.dumps({"type":"answer_chunk","run_id":run_id,"content":chunk},ensure_ascii=False)+"\n"; time.sleep(.04)
+                with db() as c: c.execute("UPDATE react_agent_runs SET status='COMPLETED',answer=?,updated_at=? WHERE id=?",(answer,now(),run_id))
+                yield json.dumps(save_react_event(run_id,"completed","분석 완료","최종 브리핑 생성을 완료했습니다.",payload={"answer":answer}),ensure_ascii=False)+"\n"; return
+            if action in completed_tools:
+                validation={"error":f"{action} 도구는 이미 실행했습니다. 기존 관찰을 사용하거나 다른 도구 또는 FINAL을 선택하세요."}
+                observations.append({"tool":"runtime_validation","result":validation})
+                yield json.dumps(save_react_event(run_id,"tool_result","도구 호출 생략",validation["error"],action,validation),ensure_ascii=False)+"\n"
+                continue
+            if action=="synthesize_evidence" and not completed_tools.intersection({"query_operational_db","search_reports","lookup_region_info"}):
+                validation={"error":"근거 종합 전에 요청에 필요한 조회 도구를 하나 이상 실행해야 합니다."}
+                observations.append({"tool":"runtime_validation","result":validation})
+                yield json.dumps(save_react_event(run_id,"tool_result","입력 조건 확인",validation["error"],action,validation),ensure_ascii=False)+"\n"
+                continue
+            result=execute_react_tool(action,observations); observations.append({"tool":action,"result":result})
+            tool_meta=next(tool for tool in REACT_TOOLS if tool["id"]==action)
+            yield json.dumps(save_react_event(run_id,"tool_result",tool_meta["name"],result.get("summary","조회가 완료되었습니다."),action,result),ensure_ascii=False)+"\n"
+            time.sleep(.18)
+        raise ModelGatewayError(f"최대 반복 횟수({max_iterations}) 안에 응답을 완료하지 못했습니다.")
+    except Exception as exc:
+        with db() as c: c.execute("UPDATE react_agent_runs SET status='FAILED',updated_at=? WHERE id=?",(now(),run_id))
+        yield json.dumps(save_react_event(run_id,"error","실행 실패",str(exc)),ensure_ascii=False)+"\n"
+
+
+@app.post("/api/react-agents/{agent_id}/runs/stream")
+def start_react_run(agent_id: str, body: ReactRunIn, x_demo_role: str = Header(...)):
+    if not body.prompt.strip(): raise HTTPException(422,"요청 내용을 입력하세요.")
+    with db() as c:
+        agent=row(c.execute("SELECT * FROM react_agents WHERE id=?",(agent_id,)).fetchone()); require_react_agent(agent,x_demo_role)
+        if agent["lifecycle"]!="PUBLISHED": raise HTTPException(409,"게시된 에이전트만 실행할 수 있습니다.")
+        user_id=session_for(x_demo_role)["user_id"]
+        chat_session=row(c.execute("SELECT * FROM react_chat_sessions WHERE id=? AND react_agent_id=? AND user_id=?",
+                                   (body.session_id,agent_id,user_id)).fetchone())
+        if not chat_session: raise HTTPException(404,"채팅 세션을 찾을 수 없습니다.")
+        prior_runs=list(c.execute("SELECT prompt,answer FROM react_agent_runs WHERE session_id=? AND status='COMPLETED' "
+                                  "ORDER BY created_at DESC LIMIT 3",(body.session_id,)))
+        conversation_context=[{"user":item["prompt"],"assistant":item["answer"]} for item in reversed(prior_runs)]
+        run_id=uid("RUN"); timestamp=now()
+        c.execute("INSERT INTO react_agent_runs(id,react_agent_id,user_id,status,prompt,answer,created_at,updated_at,session_id) "
+                  "VALUES(?,?,?,?,?,?,?,?,?)",(run_id,agent_id,user_id,"RUNNING",body.prompt,"",timestamp,timestamp,body.session_id))
+        title=chat_session["title"]
+        if title=="새 대화": title=body.prompt.strip()[:32]
+        c.execute("UPDATE react_chat_sessions SET title=?,updated_at=? WHERE id=?",(title,timestamp,body.session_id))
+    return StreamingResponse(react_stream(agent,body.prompt,run_id,conversation_context),media_type="application/x-ndjson",
+                             headers={"X-Run-Id":run_id,"Cache-Control":"no-cache"})
+
+
+@app.get("/api/react-agent-runs/{run_id}")
+def get_react_run(run_id: str, x_demo_role: str = Header(...)):
+    with db() as c:
+        run=row(c.execute("SELECT r.*,a.role,a.owner FROM react_agent_runs r JOIN react_agents a ON a.id=r.react_agent_id WHERE r.id=?",(run_id,)).fetchone())
+        if not run or run["role"]!=x_demo_role or run["owner"]!=session_for(x_demo_role)["user_id"]: raise HTTPException(404,"에이전트 실행을 찾을 수 없습니다.")
+        events=[row(item) for item in c.execute("SELECT * FROM react_agent_events WHERE run_id=? ORDER BY id",(run_id,))]
+    return {**run,"events":events}
 
 @app.get("/api/dashboard")
 def dashboard(role: str):

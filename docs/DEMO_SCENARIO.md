@@ -80,6 +80,11 @@ Each AI node produces its role-specific draft before approval. After each approv
 | AC-14 | Switch roles with dirty graph or waiting review | Save/Discard/Cancel protects edits; role scope refetches; original runtime actor unchanged; backend rejects wrong-role review |
 | AC-15 | 지휘관 상황판에서 최종 보고 확인 | 지휘관에게 대시보드·상황판 중복 메뉴가 없고 상황판 단일 메뉴에서 지도, 최근 센서 이벤트와 보고서 도착 알림을 확인한다. |
 | AC-16 | Fail the external provider | Clear failed trace with bounded retry; no fabricated output, report or auto-approval |
+| AC-17 | 에이전트 빌더에서 도구·모델·프롬프트·반복 제한을 변경하고 게시 | 설정이 저장되고 레지스트리에서 게시 상태와 연결 도구 수를 확인한다. |
+| AC-18 | 기본 ReAct 에이전트에 파주시 조사 요청 입력 | 실제 모델이 다음 행동을 선택하고 DB 조회, 보고서 검색, 지역 정보, 근거 종합의 판단 요약과 관찰이 순차 스트리밍된다. |
+| AC-19 | ReAct 에이전트가 최종 브리핑 생성 | 응답 청크가 스트리밍되고 실행이 COMPLETED가 되며 최종 내용이 저장된다. 실행 전 입력 중인 프롬프트는 대화 기록에 미리 표시되지 않는다. |
+| AC-20 | 채팅 세션 컨텍스트 관리 | 같은 세션의 후속 요청은 최근 완료 3턴을 참조하고, 새 세션은 빈 컨텍스트로 시작한다. 세션 선택 시 기록이 복원되며 삭제 시 해당 실행과 이벤트도 제거된다. |
+| AC-21 | 요청별 ReAct 도구 선택 | 단순 후속 요약은 도구 없이 완료할 수 있고, 센서 조회 요청은 작전 DB만 선택할 수 있다. 전체 브리핑 요청은 모델 판단에 따라 필요한 복수 도구를 선택하며 런타임이 미사용 도구를 강제로 실행하지 않는다. |
 
 ## Verification evidence and completion
 

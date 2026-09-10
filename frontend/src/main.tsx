@@ -7,6 +7,8 @@ import {Activity, Bell, BookOpen, Bot, Check, ChevronRight, ClipboardCheck, File
 import './styles.css';
 import './light.css';
 import './sensor.css';
+import './agent.css';
+import {ReactAgentBuilder,ReactAgentChat,ReactAgentRegistry} from './agent';
 
 const API='/api';
 type Role='ANALYST'|'STAFF'|'COMMANDER';
@@ -32,9 +34,11 @@ function Shell(){
   const nav=useNavigate();
   const location=useLocation();
   if(!session)return null;
-  const links=[['/dashboard',session.role==='COMMANDER'?'상황판':'대시보드',session.role==='COMMANDER'?Radar:LayoutDashboard],...(session.role!=='COMMANDER'?[['/builder','워크플로우 빌더',Network],['/agents','워크플로우 레지스트리',Bot],['/executions','실행 모니터링',Activity],['/situation','상황판',Radar]] as any:[]),['/manual','사용 매뉴얼',BookOpen],...(session.role==='ANALYST'?[['/sensor','센서 입력',Radio]] as any:[])];
+  const links=[['/dashboard',session.role==='COMMANDER'?'상황판':'대시보드',session.role==='COMMANDER'?Radar:LayoutDashboard],...(session.role!=='COMMANDER'?[['/builder','워크플로우 빌더',Network],['/agents','워크플로우 레지스트리',Bot],['/react-agent-builder','에이전트 빌더',Bot],['/react-agents','에이전트 레지스트리',Network],['/executions','실행 모니터링',Activity],['/situation','상황판',Radar]] as any:[]),['/manual','사용 매뉴얼',BookOpen],...(session.role==='ANALYST'?[['/sensor','센서 입력',Radio]] as any:[])];
   const isBuilderPath=location.pathname==='/builder'||/^\/agents\/[^/]+\/builder$/.test(location.pathname);
-  return <div className="app"><header><div className="brand"><Shield/> <b>Agent&Workflow Builder</b><span>DEMO</span></div><div className="headRight"><NotificationBell session={session}/><select value={session.role} onChange={async e=>{await login(e.target.value as Role);nav('/dashboard')}}>{(['ANALYST','STAFF','COMMANDER'] as Role[]).map(r=><option key={r} value={r}>{roleName[r]}</option>)}</select><div className="avatar">{session.role[0]}</div><div><b>{roleName[session.role]}</b><small>{session.area==='접경지역 전체'?'접경지역 전체':session.area}</small></div><button className="iconBtn" onClick={()=>{logout();nav('/login')}}><LogOut size={17}/></button></div></header><aside><div className="scope"><small>현재 작전 구역</small><b><span className="online"/>{session.area==='접경지역 전체'?'전 지역 통합':session.area}</b></div><nav>{links.map(([to,label,Icon]:any)=><NavLink to={to} key={to} end={to==='/agents'||to==='/dashboard'||to==='/situation'} className={({isActive})=>((to==='/builder'&&isBuilderPath)||(to!=='/builder'&&isActive))?'active':undefined}><Icon size={18}/>{label}</NavLink>)}</nav><SystemStatus/></aside><div className="content"><Routes><Route path="/dashboard" element={<Dashboard/>}/><Route path="/builder" element={<BuilderEntry/>}/><Route path="/agents" element={<AgentRegistry/>}/><Route path="/agents/:id/builder" element={<Builder/>}/><Route path="/executions" element={<Executions/>}/><Route path="/executions/:id" element={<ExecutionDetail/>}/><Route path="/situation" element={session.role==='COMMANDER'?<Navigate to="/dashboard" replace/>:<SituationMap/>}/><Route path="/sensor" element={<SensorInput/>}/><Route path="/manual" element={<Manual/>}/><Route path="*" element={<Navigate to="/dashboard"/>}/></Routes></div></div>
+  const isReactBuilderPath=location.pathname==='/react-agent-builder'||/^\/react-agents\/[^/]+\/builder$/.test(location.pathname);
+  const isReactRegistryPath=location.pathname==='/react-agents'||/^\/react-agents\/[^/]+\/chat$/.test(location.pathname);
+  return <div className="app"><header><div className="brand"><Shield/> <b>Agent&Workflow Builder</b><span>DEMO</span></div><div className="headRight"><NotificationBell session={session}/><select value={session.role} onChange={async e=>{await login(e.target.value as Role);nav('/dashboard')}}>{(['ANALYST','STAFF','COMMANDER'] as Role[]).map(r=><option key={r} value={r}>{roleName[r]}</option>)}</select><div className="avatar">{session.role[0]}</div><div><b>{roleName[session.role]}</b><small>{session.area==='접경지역 전체'?'접경지역 전체':session.area}</small></div><button className="iconBtn" onClick={()=>{logout();nav('/login')}}><LogOut size={17}/></button></div></header><aside><div className="scope"><small>현재 작전 구역</small><b><span className="online"/>{session.area==='접경지역 전체'?'전 지역 통합':session.area}</b></div><nav>{links.map(([to,label,Icon]:any)=><NavLink to={to} key={to} end={to==='/agents'||to==='/react-agents'||to==='/dashboard'||to==='/situation'} className={({isActive})=>((to==='/builder'&&isBuilderPath)||(to==='/react-agent-builder'&&isReactBuilderPath)||(to==='/react-agents'&&isReactRegistryPath)||(!['/builder','/react-agent-builder','/react-agents'].includes(to)&&isActive))?'active':undefined}><Icon size={18}/>{label}</NavLink>)}</nav><SystemStatus/></aside><div className="content"><Routes><Route path="/dashboard" element={<Dashboard/>}/><Route path="/builder" element={<BuilderEntry/>}/><Route path="/agents" element={<AgentRegistry/>}/><Route path="/agents/:id/builder" element={<Builder/>}/><Route path="/react-agent-builder" element={<ReactAgentBuilder session={session}/>}/><Route path="/react-agents" element={<ReactAgentRegistry session={session}/>}/><Route path="/react-agents/:id/builder" element={<ReactAgentBuilder session={session}/>}/><Route path="/react-agents/:id/chat" element={<ReactAgentChat session={session}/>}/><Route path="/executions" element={<Executions/>}/><Route path="/executions/:id" element={<ExecutionDetail/>}/><Route path="/situation" element={session.role==='COMMANDER'?<Navigate to="/dashboard" replace/>:<SituationMap/>}/><Route path="/sensor" element={<SensorInput/>}/><Route path="/manual" element={<Manual/>}/><Route path="*" element={<Navigate to="/dashboard"/>}/></Routes></div></div>
 }
 
 function PageHead({eyebrow,title,children}:{eyebrow:string,title:string,children?:React.ReactNode}){return <div className="pageHead"><div><span>{eyebrow}</span><h1>{title}</h1></div><div>{children}</div></div>}
@@ -197,8 +201,8 @@ function SystemStatus(){
 }
 
 const ROLE_GUIDE={
-  ANALYST:{title:'파주지역 분석관',summary:'파주시 센서 이벤트를 분석하고 지역 보고서를 검토·승인합니다.',permissions:['본인 소유 분석 워크플로우 생성·편집·게시·삭제','파주시 센서 이벤트 실행','분석관 승인 요청 처리'],nodes:['감시 센서 이벤트','이벤트 조건 확인','작전 정보 조회','위협 분석·초안 생성','분석관 검토·승인','지역 보고서 발행']},
-  STAFF:{title:'정보·작전 참모',summary:'승인된 지역 보고서를 종합하고 지휘관 상황보고를 검토·승인합니다.',permissions:['본인 소유 종합 워크플로우 생성·편집·게시·삭제','승인 지역보고 기반 자동 실행','참모 승인 요청 처리'],nodes:['승인 지역보고 접수','승인 지역보고 수집','접경지역 작전상황 조회','위협 종합·초안 생성','참모 검토·승인','지휘관 보고서 발행']},
+  ANALYST:{title:'파주지역 분석관',summary:'파주시 센서 이벤트를 분석하고 지역 보고서를 검토·승인합니다.',permissions:['본인 소유 분석 워크플로우 생성·편집·게시·삭제','ReAct 에이전트 생성·도구 연결·실행','파주시 센서 이벤트 실행','분석관 승인 요청 처리'],nodes:['감시 센서 이벤트','이벤트 조건 확인','작전 정보 조회','위협 분석·초안 생성','분석관 검토·승인','지역 보고서 발행']},
+  STAFF:{title:'정보·작전 참모',summary:'승인된 지역 보고서를 종합하고 지휘관 상황보고를 검토·승인합니다.',permissions:['본인 소유 종합 워크플로우 생성·편집·게시·삭제','ReAct 에이전트 생성·도구 연결·실행','승인 지역보고 기반 자동 실행','참모 승인 요청 처리'],nodes:['승인 지역보고 접수','승인 지역보고 수집','접경지역 작전상황 조회','위협 종합·초안 생성','참모 검토·승인','지휘관 보고서 발행']},
   COMMANDER:{title:'지휘관',summary:'승인이 끝난 최종 상황보고와 접경지역 상황판을 열람합니다.',permissions:['완료된 지휘관 보고서 열람','접경지역 통합 상황판 열람','워크플로우 편집 및 승인 권한 없음'],nodes:[]},
 } as const;
 
@@ -207,9 +211,9 @@ function Manual(){
   if(!session)return null;
   const guide=ROLE_GUIDE[session.role];
   const steps=session.role==='ANALYST'
-    ?['워크플로우 레지스트리에서 새 워크플로우를 만들거나 기본 워크플로우를 엽니다.','노드를 배치·연결하고 조건과 AI 프롬프트를 설정한 뒤 저장, 검증, 게시합니다.','센서 입력에서 탐지 규모와 신뢰도를 정해 이벤트를 전송합니다.','실행 모니터링에서 LLM 분석을 확인하고 지역 보고서를 승인합니다.']
+    ?['워크플로우 레지스트리에서 새 워크플로우를 만들거나 기본 워크플로우를 엽니다.','노드를 배치·연결하고 조건과 AI 프롬프트를 설정한 뒤 저장, 검증, 게시합니다.','에이전트 빌더에서 데이터·기능 도구와 반복 제한을 설정하고 게시한 뒤 레지스트리에서 채팅을 실행합니다.','센서 입력에서 탐지 규모와 신뢰도를 정해 이벤트를 전송합니다.','실행 모니터링에서 LLM 분석을 확인하고 지역 보고서를 승인합니다.']
     :session.role==='STAFF'
-    ?['워크플로우 레지스트리에서 종합 워크플로우의 노드와 프롬프트를 설정하고 게시합니다.','분석관이 지역 보고서를 승인하면 종합 워크플로우가 자동 실행됩니다.','실행 모니터링에서 지역별 근거와 LLM 종합 결과를 확인합니다.','지휘관 보고서 초안을 검토하고 승인합니다.']
+    ?['워크플로우 레지스트리에서 종합 워크플로우의 노드와 프롬프트를 설정하고 게시합니다.','에이전트 빌더에서 사용할 데이터·기능 도구와 모델을 설정하고 채팅 실행 결과를 검토합니다.','분석관이 지역 보고서를 승인하면 종합 워크플로우가 자동 실행됩니다.','실행 모니터링에서 지역별 근거와 LLM 종합 결과를 확인합니다.','지휘관 보고서 초안을 검토하고 승인합니다.']
     :['대시보드에서 완료된 주요 실행과 보고 현황을 확인합니다.','상황판에서 파주·연천·철원 지역의 승인 보고를 지도와 함께 확인합니다.','최종 지휘관 보고서의 승인자와 원본 보고 계보를 확인합니다.'];
   return <><PageHead eyebrow="USER GUIDE" title="사용 매뉴얼"><Badge value={guide.title}/></PageHead>
     <section className="manualHero"><BookOpen/><div><h2>{guide.title}</h2><p>{guide.summary}</p></div></section>
