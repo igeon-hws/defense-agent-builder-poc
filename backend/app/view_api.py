@@ -52,6 +52,7 @@ def read_notification(notification_id: str, x_demo_role: str = Header(...)):
 def situation_board(role: str):
     if role not in {"ANALYST","STAFF","COMMANDER","ADMIN"}: raise HTTPException(400,"지원하지 않는 역할입니다.")
     with db() as c:
-        events=[row(r) for r in c.execute("SELECT * FROM sensor_events ORDER BY created_at DESC LIMIT 8")]
+        # 지휘관에게는 원시 센서가 아니라 참모가 승인해 전달한 보고 결과만 노출한다.
+        events=[] if role=="COMMANDER" else [row(r) for r in c.execute("SELECT * FROM sensor_events ORDER BY created_at DESC LIMIT 8")]
         notes=[row(r) for r in c.execute("SELECT * FROM notifications WHERE role=? ORDER BY created_at DESC LIMIT 8",(role,))]
         return {"events":events,"notifications":notes}

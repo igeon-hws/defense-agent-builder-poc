@@ -9,6 +9,7 @@ from langgraph.types import Command
 
 from .core import GATEWAY, RUNTIME, now, row, uid
 from .gateway import ModelGatewayError
+from .connectors import WORKFLOW_CONNECTORS
 
 
 ANALYST_NODES = [
@@ -44,6 +45,8 @@ def graph(role: str) -> dict[str, Any]:
         elif node_id == "leave_summary": config = {"system_prompt": "휴가 신청자의 잔여 휴가, 신청 기간과 부대 일정을 검토해 행정병 승인용 요약을 한국어로 작성하세요. 개인정보는 신청 처리에 필요한 범위로만 표시하세요."}
         elif node_id == "context": config = {"query": "최근 24시간 작전 정보와 관련 관측 기록"}
         if node_id in {"threat", "synthesis", "leave_summary"}: config["model_id"] = GATEWAY.model
+        connector_id = WORKFLOW_CONNECTORS.get(node_id)
+        if connector_id: config["connector_id"] = connector_id
         nodes.append({"id": node_id, "type": node_id, "label": label, "group": group,
                       "position": {"x": x, "y": y}, "config": config})
     edges = [{"id": f"e-{i}", "source": source[i][0], "target": source[i+1][0]}

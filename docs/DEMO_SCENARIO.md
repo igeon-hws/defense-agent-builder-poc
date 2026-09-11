@@ -78,7 +78,7 @@ Each AI node produces its role-specific draft before approval. After each approv
 | AC-12 | Refresh/restart during either pending review | Same checkpoint/draft recover, same execution resumes; no duplicated pre-approval model call or publishing |
 | AC-13 | Duplicate decision/event or crash-window recovery | Unique report and Staff execution invariants hold; stale/conflicting reviews fail visibly |
 | AC-14 | Switch roles with dirty graph or waiting review | Save/Discard/Cancel protects edits; role scope refetches; original runtime actor unchanged; backend rejects wrong-role review |
-| AC-15 | 지휘관 상황판에서 최종 보고 확인 | 지휘관에게 대시보드·상황판 중복 메뉴가 없고 상황판 단일 메뉴에서 지도, 최근 센서 이벤트와 보고서 도착 알림을 확인한다. |
+| AC-15 | 지휘관 상황판에서 최종 보고 확인 | 지휘관에게 대시보드·상황판 중복 메뉴가 없고 상황판 단일 메뉴에서 지도, 최신 참모 종합 판단과 보고서 도착 알림을 확인한다. 원시 센서 이벤트는 표시하지 않으며 지역 상태는 최신 종합보고가 참조한 지역 보고를 따른다. |
 | AC-16 | Fail the external provider | Clear failed trace with bounded retry; no fabricated output, report or auto-approval |
 | AC-17 | 에이전트 빌더에서 도구·모델·프롬프트·반복 제한을 변경하고 게시 | 설정이 저장되고 레지스트리에서 게시 상태와 연결 도구 수를 확인한다. |
 | AC-18 | 기본 ReAct 에이전트에 파주시 조사 요청 입력 | 실제 모델이 다음 행동을 선택하고 DB 조회, 보고서 검색, 지역 정보, 근거 종합의 판단 요약과 관찰이 순차 스트리밍된다. |
@@ -88,6 +88,9 @@ Each AI node produces its role-specific draft before approval. After each approv
 | AC-22 | 행정병이 정기 휴가 신청을 접수 | 잔여 휴가와 관련 부대 일정이 조회되고 AI 요약 후 WAITING_FOR_ADMIN_APPROVAL에서 중단된다. |
 | AC-23 | 행정병이 휴가 신청 승인·반려 | 승인 시 같은 LangGraph 실행이 재개되어 모의 인트라넷 등록이 한 건 생성된다. 반려 시 등록 없이 REJECTED로 종료된다. |
 | AC-24 | 행정병 ReAct 에이전트에 주간 외출·외박 보고 요청 | 행정 전용 도구만 사용해 현황·일정·규정을 조회하고 주간 보고서를 NDJSON으로 스트리밍한다. |
+| AC-25 | 에이전트 빌더에서 데이터·외부 시스템 카탈로그 필터 및 연결 변경 | 현재 역할의 연동만 표시되고 선택한 connector가 정의에 저장된다. 실행 시 해당 connector가 제공하는 도구만 모델에 노출된다. |
+| AC-26 | 워크플로우 빌더에서 연동 출처 확인 | 역할별 최소 노드 수는 유지되며 팔레트와 선택 노드 설정에 연결 데이터·외부 시스템 이름과 MOCK 상태가 표시된다. |
+| AC-27 | 참모 레지스트리에서 기본 주간 위협 비교 에이전트 실행 | 참모 소유 게시 에이전트가 표시되고 기본 질문으로 최근 관측, 지난주 승인 보고 기준과 근거 종합 도구를 선택한다. 결과에는 이번 주·지난주 비교 수치와 근거 식별자가 포함된다. |
 
 ## Verification evidence and completion
 

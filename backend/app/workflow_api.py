@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException
 from .core import GATEWAY, db, now, require_agent_owner, require_role, row, session_for, uid
 from .schemas import AgentCreateIn, AgentIn, DecisionIn, LeaveRequestIn, SensorEventIn
 from .workflow_service import ADMIN_NODES, ANALYST_NODES, STAFF_NODES, create_execution, graph, invoke_workflow
+from .connectors import WORKFLOW_CONNECTORS, connectors_for_role
 
 router = APIRouter()
 
@@ -18,7 +19,21 @@ def nodes(role: str, x_demo_role: str = Header(...)):
     if role != x_demo_role: raise HTTPException(403,"현재 역할에서 사용할 수 없는 노드입니다.")
     src = {"ANALYST":ANALYST_NODES,"STAFF":STAFF_NODES,"ADMIN":ADMIN_NODES}.get(role,[])
     defaults={n["type"]:n["config"] for n in graph(role).get("nodes",[])} if src else {}
-    return [{"type":n,"label":l,"group":g,"config":defaults.get(n,{})} for n,l,g in src]
+    connectors={item["id"]:item for item in connectors_for_role(role)}
+    result=[]
+    for node_type,label,group in src:
+        connector=connectors.get(WORKFLOW_CONNECTORS.get(node_type,""))
+        result.append({"type":node_type,"label":label,"group":group,"config":defaults.get(node_type,{}),
+                       "connector": ({"id":connector["id"],"name":connector["name"],
+                                      "category":connector["category"],"mode":connector["mode"]}
+                                     if connector else None)})
+    return result
+
+@router.get("/api/connectors")
+def connectors(x_demo_role: str = Header(...)):
+    if x_demo_role not in {"ANALYST","STAFF","ADMIN"}:
+        raise HTTPException(403,"연동 카탈로그를 사용할 권한이 없습니다.")
+    return connectors_for_role(x_demo_role)
 
 @router.get("/api/agents")
 def agents(role: str, x_demo_role: str = Header(...)):

@@ -20,7 +20,7 @@ Required stack: React + TypeScript + React Flow frontend; FastAPI + LangGraph + 
 | --- | --- | --- |
 | 분석관 | 경기도 파주시 센서 이벤트, 위협 분석, 본인 워크플로우와 지역 보고서 | 지역 보고서 승인 |
 | 정보·작전 참모 | 승인된 지역 보고 수집, 다지역 위협 종합, 본인 워크플로우 | 지휘관 보고서 승인 |
-| 지휘관 | 지도, 최근 센서 이벤트, 보고서 도착 알림과 최종 보고서 | 빌더 편집·승인 권한 없음 |
+| 지휘관 | 지도, 참모 종합 판단, 보고서 도착 알림과 최종 보고서 | 빌더 편집·승인 권한 없음 |
 
 Provide Mock Login and a persistent header Role Switch. Session fields: user_id, role, area, permissions. Role and area determine visible workflows, nodes, data and review actions through a small static policy. This demonstrates role experience; it is not production authentication or a full authorization engine.
 
@@ -42,17 +42,21 @@ Workflow Registry는 현재 세션의 사용자 ID를 기준으로 소유 워크
 5. Persist the approved regional report before emitting its Approved Report event. This event starts the published Staff Workflow, which combines it with seeded approved B/C reports and mocked context, performs synthesis, drafts a Commander report, and pauses for Staff HITL.
 6. 참모 승인 후에만 지휘관 보고서를 저장하고 지휘관에게 도착 알림을 생성한다. 지휘관은 알림을 클릭해 보고서를 열며, 보고서는 원본 실행과 승인자 정보를 유지한다.
 7. Show actual node execution status, input/output summaries, timing, errors and approvals inside Builder and in a dedicated Execution view. Refresh must recover waiting executions from backend state.
-8. Situation Board shows an OpenStreetMap base map for 경기도 파주시, 경기도 연천군 and 강원특별자치도 철원군 together with recent events and approved reports. Notifications stay inside the application.
+8. Situation Board shows an OpenStreetMap base map for 경기도 파주시, 경기도 연천군 and 강원특별자치도 철원군 together with approved reports. 지휘관 화면은 원시 센서 이벤트 대신 최신 참모 종합보고의 위협 수준, 핵심 판단, 참조 지역과 보고 시각을 표시한다. Notifications stay inside the application.
 
 ## ReAct 에이전트 첫 구현
 
-워크플로우와 별도로 에이전트 빌더와 에이전트 레지스트리를 제공한다. 사용자는 에이전트에 허용할 외부 시스템·기능 도구, 모델, 시스템 프롬프트와 최대 반복 횟수를 설정하고 게시한다. 게시된 에이전트는 레지스트리에서 채팅 화면으로 열 수 있다.
+워크플로우와 별도로 에이전트 빌더와 에이전트 레지스트리를 제공한다. 사용자는 역할별 **연동 카탈로그**에서 데이터와 외부 시스템을 선택하고, 선택한 연동이 제공하는 기능 도구만 에이전트에 허용한다. 카탈로그에는 연동 이름, 설명, `DATA`/`SYSTEM`, `MOCK`/`LIVE`, `READ`/`SEARCH`/`WRITE`와 승인 필요 여부를 표시한다. 모델, 시스템 프롬프트와 최대 반복 횟수를 설정해 게시하며, 게시된 에이전트는 레지스트리에서 채팅 화면으로 열 수 있다.
 
 기본 시나리오는 “파주시 최근 이상 징후를 조사하고 지휘관 브리핑을 작성해줘”이다. ReAct 런타임은 모델에게 매 반복의 다음 행동을 선택하게 하고, 선택된 작전 DB 조회·기존 보고서 검색·지역 정보 조회·근거 종합 결과를 다시 관찰로 제공한다. 연결된 도구 전체나 고정 순서를 강제하지 않으며, 현재 요청과 대화 컨텍스트만으로 답할 수 있으면 도구 호출 없이 완료할 수 있다. 런타임은 허용 목록, 중복 호출과 종합 도구의 최소 입력 계약만 검증한다. 화면은 비공개 chain-of-thought가 아니라 공개 가능한 판단 요약, 선택한 도구, 관찰 결과와 최종 응답 청크를 스트리밍하고 분석 완료 상태로 종료한다. 에이전트 HITL은 후속 범위다.
+
+정보·작전 참모에게는 기본 게시 에이전트 `주간 위협 수준 비교 에이전트`를 제공한다. “이번 주 위협 수준이 지난주보다 높아졌는지 근거와 함께 설명해줘.”라는 요청에 현재 작전 관측과 지난주 승인 보고 기준을 조회하고, 주간 위협 변화와 근거 식별자를 포함한 비교 결과를 생성한다.
 
 에이전트 채팅은 사용자별·에이전트별 세션으로 저장한다. 같은 세션의 후속 요청에는 최근 완료 대화 3턴만 모델 컨텍스트로 전달하고, 새 대화에서는 이전 컨텍스트를 사용하지 않는다. 사용자는 세션을 선택해 대화를 복원하거나 새로 만들고 삭제할 수 있다.
 
 첫 구현의 외부 시스템은 SQLite 데이터와 명시적으로 표시된 mock 어댑터다. 실제 MCP 서버 연결, 임의 도구 등록, 장기 메모리와 다중 에이전트 협업은 후속 범위다.
+
+워크플로우 빌더는 기존의 역할별 최소 노드 수를 유지한다. 대신 팔레트와 노드 설정에서 각 노드가 사용하는 데이터 또는 외부 시스템과 mock 상태를 보여준다. 분석관·참모는 작전 관측 데이터, 승인 보고서 저장소, 지역 상황 정보와 지휘 보고 체계를 사용하고, 행정병은 인사행정 데이터, 부대 일정·규정과 부대 인트라넷을 사용한다. 지휘관은 연동을 편집하지 않는다.
 
 ## Scope boundaries
 

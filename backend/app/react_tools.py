@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from .connectors import connector_for_capability, connectors_for_role
+
 
 REACT_TOOLS = [
     {"id": "query_operational_db", "name": "작전 DB 조회", "kind": "database", "roles": ["ANALYST", "STAFF"], "description": "최근 파주시 센서 관측과 이상 징후를 조회합니다."},
@@ -18,7 +20,16 @@ REACT_TOOLS = [
 
 
 def tools_for_role(role: str) -> list[dict[str, Any]]:
-    return [tool for tool in REACT_TOOLS if role in tool.get("roles", [])]
+    tools = []
+    for tool in REACT_TOOLS:
+        if role not in tool.get("roles", []):
+            continue
+        connector = connector_for_capability(tool["id"], role)
+        capability = next(item for item in connector["capabilities"] if item["id"] == tool["id"])
+        tools.append({**tool, "connector_id": connector["id"], "connector_name": connector["name"],
+                      "category": connector["category"], "mode": connector["mode"],
+                      "access": capability["access"]})
+    return tools
 
 
 def default_react_definition(model_id: str, role: str = "ANALYST") -> dict[str, Any]:
@@ -28,15 +39,18 @@ def default_react_definition(model_id: str, role: str = "ANALYST") -> dict[str, 
         "system_prompt": (
             "부대 인사행정을 지원하는 행정병 에이전트입니다. 외출·외박 현황과 부대 일정을 확인하고, 개인정보는 필요한 범위로만 사용해 간결한 한국어 주간 현황 보고를 작성하세요."
             if role == "ADMIN" else
+            "접경지역 정보를 종합하는 정보·작전 참모 에이전트입니다. 현재 관측과 과거 승인 보고서를 비교하고, 위협 수준의 변화와 판단 근거를 간결한 한국어로 설명하세요."
+            if role == "STAFF" else
             "파주시 작전 정보를 조사하는 국방 분석 에이전트입니다. 근거를 먼저 수집하고 간결한 한국어 지휘관 브리핑을 작성하세요."
         ),
         "model": {"provider": "openai", "model_id": model_id},
         "max_iterations": 6,
+        "connectors": [connector["id"] for connector in connectors_for_role(role)],
         "tools": [tool["id"] for tool in tools],
     }
 
 
-def execute_react_tool(db: Callable, tool_name: str, observations: list[dict[str, Any]]) -> dict[str, Any]:
+def execute_react_tool(db: Callable, tool_name: str, observations: list[dict[str, Any]], goal: str = "") -> dict[str, Any]:
     if tool_name == "query_operational_db":
         with db() as connection:
             records = [dict(item) for item in connection.execute(
@@ -56,7 +70,10 @@ def execute_react_tool(db: Callable, tool_name: str, observations: list[dict[str
         if not records:
             records = [{"id": "RPT-PJU-HIST-01", "title": "파주시 북부 감시 동향", "area": "경기도 파주시",
                         "threat": "MEDIUM", "content": "최근 7일간 야간 이동 징후가 간헐적으로 증가했습니다.", "approved_at": "데모 과거자료"}]
-        return {"source": "승인 보고서 저장소", "records": records, "summary": f"관련 승인·과거 보고서 {len(records)}건을 찾았습니다."}
+        return {"source": "승인 보고서 저장소", "records": records,
+                "weekly_baseline": {"period": "지난주", "threat_level": "MEDIUM", "anomaly_count": 3,
+                                    "average_confidence": 0.76, "evidence_id": "RPT-BORDER-W35"},
+                "summary": f"관련 승인·과거 보고서 {len(records)}건과 지난주 비교 기준을 찾았습니다."}
     if tool_name == "lookup_region_info":
         return {"source": "모의 지역정보 시스템", "area": "경기도 파주시", "terrain": "임진강과 접경 산악·평야가 혼재",
                 "weather": "야간 저시정, 북동풍", "operational_note": "민간 접근로와 감시 취약 구간을 함께 고려해야 합니다.",
@@ -66,14 +83,29 @@ def execute_react_tool(db: Callable, tool_name: str, observations: list[dict[str
         reports = next((item["result"] for item in observations if item["tool"] == "search_reports"), {})
         region = next((item["result"] for item in observations if item["tool"] == "lookup_region_info"), {})
         sensor_count, report_count = len(sensor.get("records", [])), len(reports.get("records", []))
-        briefing = ("[파주시 최근 이상 징후 지휘관 브리핑]\n\n"
+        weekly_comparison = any(word in goal for word in ("지난주", "이번 주", "비교", "높아"))
+        if weekly_comparison:
+            records = sensor.get("records", [])
+            average = sum(float(item.get("confidence", 0)) for item in records) / len(records) if records else 0
+            baseline = reports.get("weekly_baseline", {"threat_level": "MEDIUM", "anomaly_count": 3,
+                                                        "average_confidence": .76, "evidence_id": "RPT-BORDER-W35"})
+            direction = "높아졌습니다" if len(records) >= baseline["anomaly_count"] or average > baseline["average_confidence"] else "높아졌다고 보기 어렵습니다"
+            briefing = ("[주간 접경지역 위협 수준 비교]\n\n"
+                        f"1. 결론: 이번 주 위협 수준은 지난주보다 {direction}.\n\n"
+                        f"2. 이번 주 근거: 최근 주요 관측 {len(records)}건, 평균 신뢰도 {average:.2f}이며 이동체·열원 징후가 확인되었습니다.\n\n"
+                        f"3. 지난주 기준: 위협 수준 {baseline['threat_level']}, 주요 이상 징후 {baseline['anomaly_count']}건, 평균 신뢰도 {baseline['average_confidence']:.2f}였습니다.\n\n"
+                        f"4. 근거 식별자: OBS-PJU-W36, {baseline['evidence_id']}\n\n"
+                        "5. 판단: 단기 증가 여부는 확인되었으나 지속 추세 판단을 위해 후속 관측이 필요합니다.\n\n"
+                        "※ 본 결과는 세미나용 모의 데이터를 사용했습니다.")
+        else:
+            briefing = ("[파주시 최근 이상 징후 지휘관 브리핑]\n\n"
                     f"1. 상황: 최근 파주시 센서 관측 {sensor_count}건과 관련 보고서 {report_count}건을 확인했습니다. "
                     "이동체 및 열원 징후가 과거 야간 이동 증가 패턴과 일부 일치합니다.\n\n"
                     f"2. 판단: {region.get('terrain', '접경 지형')}과 {region.get('weather', '현재 기상')}을 고려할 때 추가 확인이 필요한 중간 수준 징후입니다.\n\n"
                     "3. 권고: 파주시 북부 감시 자산을 유지하고 동일 구간의 후속 센서 관측과 기존 보고 간 상관성을 재확인하십시오.\n\n"
                     "※ 본 결과는 세미나용 모의 데이터를 사용했습니다.")
         return {"source": "근거 종합 기능", "evidence_count": sensor_count + report_count + 1,
-                "briefing": briefing, "summary": "수집한 근거를 지휘관 브리핑 초안으로 종합했습니다."}
+                "briefing": briefing, "summary": ("이번 주와 지난주 위협 근거를 비교했습니다." if weekly_comparison else "수집한 근거를 지휘관 브리핑 초안으로 종합했습니다.")}
     if tool_name == "query_personnel_movements":
         with db() as connection:
             records = [dict(item) for item in connection.execute(

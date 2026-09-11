@@ -87,13 +87,13 @@ class ModelGateway:
                 candidates.append(("search_personnel_rules", "현황 보고에 적용할 인사행정 기준을 확인합니다."))
             if any(word in goal for word in ("외출", "외박")) and any(word in goal for word in ("보고", "작성", "현황")):
                 candidates.append(("generate_weekly_movement_report", "조회한 인사 자료를 주간 현황 보고로 종합합니다."))
-            if any(word in goal for word in ("센서", "이상", "징후", "최근", "작전")):
+            if any(word in goal for word in ("센서", "이상", "징후", "최근", "작전", "위협")):
                 candidates.append(("query_operational_db", "요청에 필요한 최근 작전·센서 데이터를 확인합니다."))
-            if any(word in goal for word in ("보고서", "비교", "과거", "기존", "브리핑")):
+            if any(word in goal for word in ("보고서", "비교", "과거", "기존", "브리핑", "지난주", "이번 주")):
                 candidates.append(("search_reports", "요청과 관련된 기존 보고서를 확인합니다."))
             if any(word in goal for word in ("지역", "지형", "기상", "파주", "브리핑")):
                 candidates.append(("lookup_region_info", "판단에 필요한 지역 맥락을 확인합니다."))
-            if any(word in goal for word in ("브리핑", "종합", "작성")):
+            if any(word in goal for word in ("브리핑", "종합", "작성", "비교", "위협")):
                 candidates.append(("synthesize_evidence", "선택한 근거를 요청한 형식으로 종합합니다."))
             plan = [(action, summary) for action, summary in candidates if action in available]
             for action, summary in plan:

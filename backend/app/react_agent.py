@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from .gateway import ModelGateway, ModelGatewayError
 from .react_tools import default_react_definition, execute_react_tool, tools_for_role
+from .connectors import hydrate_react_definition
 
 
 class ReactAgentCreateIn(BaseModel):
@@ -38,6 +39,11 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
                         now: Callable[[], str], uid: Callable[[str], str]) -> APIRouter:
     router = APIRouter(prefix="/api")
 
+    def hydrate_agent(agent: dict[str, Any] | None) -> dict[str, Any] | None:
+        if agent:
+            agent["definition"] = hydrate_react_definition(agent["definition"], agent["role"])
+        return agent
+
     def require_agent(agent: dict[str, Any] | None, role: str) -> None:
         if not agent:
             raise HTTPException(404, "에이전트를 찾을 수 없습니다.")
@@ -60,7 +66,7 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
 
     def stream(agent: dict[str, Any], prompt: str, run_id: str, context: list[dict[str, str]]):
         """LLM이 선택한 도구를 반복 실행하고 각 단계를 한 줄씩 스트리밍한다."""
-        definition = agent["definition"]
+        definition = hydrate_react_definition(agent["definition"], agent["role"])
         enabled = definition.get("tools", [])
         max_iterations = max(5, min(8, int(definition.get("max_iterations", 6))))
         observations: list[dict[str, Any]] = []
@@ -115,7 +121,7 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
                     observations.append({"tool": "runtime_validation", "result": validation})
                     yield json.dumps(save_event(run_id, "tool_result", "입력 조건 확인", validation["error"], action, validation), ensure_ascii=False) + "\n"
                     continue
-                result = execute_react_tool(db, action, observations)
+                result = execute_react_tool(db, action, observations, prompt)
                 observations.append({"tool": action, "result": result})
                 meta = next(tool for tool in role_tools if tool["id"] == action)
                 yield json.dumps(save_event(run_id, "tool_result", meta["name"], result.get("summary", "조회가 완료되었습니다."), action, result), ensure_ascii=False) + "\n"
@@ -137,7 +143,7 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
         if role != x_demo_role or role not in {"ANALYST", "STAFF", "ADMIN"}:
             raise HTTPException(403, "에이전트 레지스트리에 접근할 권한이 없습니다.")
         with db() as connection:
-            return [deserialize(item) for item in connection.execute(
+            return [hydrate_agent(deserialize(item)) for item in connection.execute(
                 "SELECT * FROM react_agents WHERE role=? AND owner=? ORDER BY updated_at DESC", (role, session_for(role)["user_id"]))]
 
     @router.post("/react-agents")
@@ -155,29 +161,28 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
     @router.get("/react-agents/{agent_id}")
     def get_agent(agent_id: str, x_demo_role: str = Header(...)):
         with db() as connection:
-            agent = deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone())
+            agent = hydrate_agent(deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone()))
         require_agent(agent, x_demo_role)
         return agent
 
     @router.put("/react-agents/{agent_id}")
     def save_agent(agent_id: str, body: ReactAgentIn, x_demo_role: str = Header(...)):
         with db() as connection:
-            agent = deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone())
+            agent = hydrate_agent(deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone()))
             require_agent(agent, x_demo_role)
-            allowed = {tool["id"] for tool in tools_for_role(x_demo_role)}
-            selected = body.definition.get("tools", [])
-            if not selected or any(tool not in allowed for tool in selected):
-                raise HTTPException(422, "지원되는 도구를 하나 이상 연결해야 합니다.")
-            body.definition["max_iterations"] = max(5, min(8, int(body.definition.get("max_iterations", 6))))
-            body.definition.pop("require_approval", None)
+            definition = hydrate_react_definition(body.definition, x_demo_role)
+            if not definition["connectors"] or not definition["tools"]:
+                raise HTTPException(422, "데이터 또는 외부 시스템을 하나 이상 연결해야 합니다.")
+            definition["max_iterations"] = max(5, min(8, int(definition.get("max_iterations", 6))))
+            definition.pop("require_approval", None)
             connection.execute("UPDATE react_agents SET name=?,description=?,definition=?,lifecycle='DRAFT',updated_at=? WHERE id=?",
-                               (body.name, body.description, json.dumps(body.definition, ensure_ascii=False), now(), agent_id))
+                               (body.name, body.description, json.dumps(definition, ensure_ascii=False), now(), agent_id))
         return {"saved": True, "lifecycle": "DRAFT"}
 
     @router.post("/react-agents/{agent_id}/publish")
     def publish_agent(agent_id: str, x_demo_role: str = Header(...)):
         with db() as connection:
-            agent = deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone())
+            agent = hydrate_agent(deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone()))
             require_agent(agent, x_demo_role)
             version = int(agent["version"]) + 1
             connection.execute("UPDATE react_agents SET lifecycle='PUBLISHED',version=?,updated_at=? WHERE id=?", (version, now(), agent_id))
@@ -185,10 +190,10 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
 
     @router.delete("/react-agents/{agent_id}")
     def delete_agent(agent_id: str, x_demo_role: str = Header(...)):
-        if agent_id in {"react-paju-briefing", "react-weekly-movement"}:
+        if agent_id in {"react-paju-briefing", "react-weekly-movement", "react-weekly-threat-comparison"}:
             raise HTTPException(409, "기본 제공 에이전트는 삭제할 수 없습니다.")
         with db() as connection:
-            agent = deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone())
+            agent = hydrate_agent(deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone()))
             require_agent(agent, x_demo_role)
             connection.execute("DELETE FROM react_agents WHERE id=?", (agent_id,))
         return {"deleted": True}
@@ -196,7 +201,7 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
     @router.get("/react-agents/{agent_id}/sessions")
     def list_sessions(agent_id: str, x_demo_role: str = Header(...)):
         with db() as connection:
-            agent = deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone())
+            agent = hydrate_agent(deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone()))
             require_agent(agent, x_demo_role)
             return [dict(item) for item in connection.execute(
                 "SELECT s.*,count(r.id) AS turn_count FROM react_chat_sessions s LEFT JOIN react_agent_runs r "
@@ -206,7 +211,7 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
     @router.post("/react-agents/{agent_id}/sessions")
     def create_session(agent_id: str, body: ReactSessionCreateIn, x_demo_role: str = Header(...)):
         with db() as connection:
-            agent = deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone())
+            agent = hydrate_agent(deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone()))
             require_agent(agent, x_demo_role)
             session_id, timestamp, title = uid("CHAT"), now(), body.title.strip() or "새 대화"
             connection.execute("INSERT INTO react_chat_sessions VALUES(?,?,?,?,?,?)",
@@ -223,7 +228,7 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
     @router.get("/react-agents/{agent_id}/sessions/{session_id}")
     def get_session(agent_id: str, session_id: str, x_demo_role: str = Header(...)):
         with db() as connection:
-            agent = deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone())
+            agent = hydrate_agent(deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone()))
             require_agent(agent, x_demo_role)
             chat = require_session(connection, agent_id, session_id, x_demo_role)
             messages = [dict(item) for item in connection.execute(
@@ -233,7 +238,7 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
     @router.delete("/react-agents/{agent_id}/sessions/{session_id}")
     def delete_session(agent_id: str, session_id: str, x_demo_role: str = Header(...)):
         with db() as connection:
-            agent = deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone())
+            agent = hydrate_agent(deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone()))
             require_agent(agent, x_demo_role)
             require_session(connection, agent_id, session_id, x_demo_role)
             run_ids = [item["id"] for item in connection.execute("SELECT id FROM react_agent_runs WHERE session_id=?", (session_id,))]

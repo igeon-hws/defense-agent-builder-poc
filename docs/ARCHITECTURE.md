@@ -18,13 +18,15 @@ Use one backend process and SQLite. Separate modules and interfaces, not deploya
 
 백엔드 모듈은 책임별로 나눈다. `main.py`는 FastAPI 앱 생성, CORS와 라우터 등록만 담당한다. `core.py`는 환경 설정, SQLite 연결, 공통 ID·시간 함수와 mock 세션 정책을 제공하고, `database.py`는 스키마 초기화·마이그레이션·fixture 생성을 담당한다. `schemas.py`에는 공통 HTTP 입력 모델을 둔다. `workflow_api.py`는 워크플로우·실행·승인·보고서 HTTP API를, `workflow_service.py`는 기본 정의, LangGraph 실행과 상태 전이를 담당한다. `view_api.py`는 상태·모델·대시보드·알림·상황판 조회 API를 제공한다. `react_agent.py`는 ReAct 에이전트·채팅 세션 API와 NDJSON 실행 스트림을, `react_tools.py`는 도구 카탈로그와 도구별 실행 구현을 담당한다. `runtime.py`는 LangGraph 그래프 컴파일과 체크포인트를, `gateway.py`는 외부 모델 호출과 결정론적 테스트 제공자를 담당한다. 모든 모듈은 같은 프로세스와 SQLite 연결 팩토리를 공유한다.
 
-ReAct 에이전트는 워크플로우 정의와 분리된 `react_agents` 정의를 사용한다. 정의에는 모델, 시스템 프롬프트, 최대 반복 횟수와 허용 도구 ID만 저장한다. `react_chat_sessions`가 사용자별 대화 경계를 저장하고 `react_agent_runs`와 `react_agent_events`가 요청, 단계별 공개 이벤트와 최종 결과를 저장한다. 실행 API는 NDJSON으로 요청 접수, 판단 요약, 도구 관찰, 응답 청크와 완료 이벤트를 순서대로 스트리밍한다. 같은 세션의 최근 완료 3턴을 `conversation_context`로 모델에 전달하며 세션 간에는 컨텍스트를 공유하지 않는다. 에이전트 실행의 HITL은 첫 구현에서 제외한다.
+ReAct 에이전트는 워크플로우 정의와 분리된 `react_agents` 정의를 사용한다. 정의에는 모델, 시스템 프롬프트, 최대 반복 횟수, 선택한 connector ID와 파생된 허용 도구 ID를 저장한다. `connectors.py`가 역할별 데이터·외부 시스템, mock 여부, capability와 접근 유형을 정의한다. 저장과 실행 시 서버가 connector 선택으로 허용 도구를 다시 계산하므로 클라이언트가 임의 도구 ID를 추가할 수 없다. connector 필드가 없는 기존 정의는 저장된 도구 ID로 자동 보완한다. `react_chat_sessions`가 사용자별 대화 경계를 저장하고 `react_agent_runs`와 `react_agent_events`가 요청, 단계별 공개 이벤트와 최종 결과를 저장한다. 실행 API는 NDJSON으로 요청 접수, 판단 요약, 도구 관찰, 응답 청크와 완료 이벤트를 순서대로 스트리밍한다. 같은 세션의 최근 완료 3턴을 `conversation_context`로 모델에 전달하며 세션 간에는 컨텍스트를 공유하지 않는다. 에이전트 실행의 HITL은 첫 구현에서 제외한다.
 
 모델은 매 반복에서 다음 도구 또는 FINAL을 구조화 출력으로 선택한다. 런타임은 연결된 모든 도구의 실행이나 순서를 강제하지 않고 모델의 선택을 그대로 실행한다. 현재 요청과 최근 대화만으로 답할 수 있으면 첫 반복에도 FINAL이 가능하다. 런타임은 허용 목록, 5~8회 반복 제한, 동일 도구 중복 호출 방지와 근거 종합의 최소 입력 계약만 검증한다. 기본 도구는 작전 DB 조회, 승인 보고서 검색, 지역 정보 조회와 근거 종합이며 현재 모두 로컬 SQLite 또는 mock 어댑터다. 실제 MCP transport는 아직 연결하지 않으며 이후 같은 도구 인터페이스에 어댑터로 추가한다.
 
 ## Workflow Definition and compilation
 
 Workflow Definition JSON은 schema_version, 설명, 모델 설정, 노드와 edge를 저장한다. 노드는 id, type, label, group, config, position을 가지며 edge는 source와 target을 가진다. 실행 가능한 Python 코드나 API credential은 Definition에 저장하지 않는다.
+
+역할별 workflow node catalog 응답은 대응하는 connector의 ID, 이름, 분류와 mode를 함께 반환한다. 기본 정의의 노드 config에도 `connector_id`를 저장해 어떤 연동을 사용하는지 추적한다. 워크플로우 런타임은 기존 capability adapter를 실행하며, 이 단계에서는 사용자 임의 endpoint나 credential 등록을 허용하지 않는다.
 
 Workflow versions carry version, lifecycle_status and the full definition. Minimal lifecycle: DRAFT → PUBLISHED → SUSPENDED. Publish validates and snapshots a draft; Test uses a saved snapshot, even if unpublished. Registry registration is achieved by persistence and publishing; do not build a second formal review workflow. Workflow deployment approval and an execution's Human Approval are different concepts. The former is deferred; the latter is mandatory.
 

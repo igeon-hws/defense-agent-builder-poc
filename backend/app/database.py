@@ -6,6 +6,7 @@ import json
 
 from .core import DB_PATH, GATEWAY, db, now
 from .react_tools import default_react_definition
+from .connectors import hydrate_react_definition
 from .workflow_service import graph
 
 
@@ -68,11 +69,17 @@ def initialize_database():
                   ("react-weekly-movement","주간 외출·외박 현황 보고 에이전트",
                    "인사행정 DB와 부대 일정, 관련 규정을 조회해 이번 주 외출·외박 현황 보고서를 작성합니다.",
                    "ADMIN","admin.hr01","PUBLISHED",1,json.dumps(admin_react_definition,ensure_ascii=False),now()))
-        for saved_agent in c.execute("SELECT id,definition FROM react_agents").fetchall():
+        staff_react_definition=default_react_definition(GATEWAY.model,"STAFF")
+        c.execute("INSERT OR IGNORE INTO react_agents VALUES(?,?,?,?,?,?,?,?,?)",
+                  ("react-weekly-threat-comparison","주간 위협 수준 비교 에이전트",
+                   "이번 주와 지난주 접경지역 위협 수준을 관련 관측과 승인 보고서 근거로 비교합니다.",
+                   "STAFF","staff.ops","PUBLISHED",1,json.dumps(staff_react_definition,ensure_ascii=False),now()))
+        for saved_agent in c.execute("SELECT id,role,definition FROM react_agents").fetchall():
             saved_definition=json.loads(saved_agent["definition"])
             if "require_approval" in saved_definition:
                 saved_definition.pop("require_approval",None)
-                c.execute("UPDATE react_agents SET definition=? WHERE id=?",(json.dumps(saved_definition,ensure_ascii=False),saved_agent["id"]))
+            saved_definition=hydrate_react_definition(saved_definition,saved_agent["role"])
+            c.execute("UPDATE react_agents SET definition=? WHERE id=?",(json.dumps(saved_definition,ensure_ascii=False),saved_agent["id"]))
         if not c.execute("SELECT 1 FROM agents").fetchone():
             for agent_id, name, role, area, owner in [
                 ("analyst-a12", "파주 감시·위협분석 워크플로우", "ANALYST", "경기도 파주시", "analyst.a12"),
