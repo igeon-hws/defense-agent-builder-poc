@@ -7,8 +7,8 @@ import json
 from fastapi import APIRouter, Header, HTTPException
 
 from .core import GATEWAY, db, now, require_agent_owner, require_role, row, session_for, uid
-from .schemas import AgentCreateIn, AgentIn, DecisionIn, SensorEventIn
-from .workflow_service import ANALYST_NODES, STAFF_NODES, create_execution, graph, invoke_workflow
+from .schemas import AgentCreateIn, AgentIn, DecisionIn, LeaveRequestIn, SensorEventIn
+from .workflow_service import ADMIN_NODES, ANALYST_NODES, STAFF_NODES, create_execution, graph, invoke_workflow
 
 router = APIRouter()
 
@@ -16,7 +16,7 @@ router = APIRouter()
 @router.get("/api/nodes")
 def nodes(role: str, x_demo_role: str = Header(...)):
     if role != x_demo_role: raise HTTPException(403,"현재 역할에서 사용할 수 없는 노드입니다.")
-    src = ANALYST_NODES if role == "ANALYST" else STAFF_NODES if role == "STAFF" else []
+    src = {"ANALYST":ANALYST_NODES,"STAFF":STAFF_NODES,"ADMIN":ADMIN_NODES}.get(role,[])
     defaults={n["type"]:n["config"] for n in graph(role).get("nodes",[])} if src else {}
     return [{"type":n,"label":l,"group":g,"config":defaults.get(n,{})} for n,l,g in src]
 
@@ -27,7 +27,7 @@ def agents(role: str, x_demo_role: str = Header(...)):
     owner=session_for(role)["user_id"]
     with db() as c:
         result=[row(r) for r in c.execute("SELECT * FROM agents WHERE role=? AND owner=? ORDER BY name",(role,owner))]
-        for agent in result: agent["deletable"]=agent["id"] not in {"analyst-a12","staff-synthesis"}
+        for agent in result: agent["deletable"]=agent["id"] not in {"analyst-a12","staff-synthesis","admin-leave-registration"}
         return result
 
 @router.post("/api/agents")
@@ -47,7 +47,7 @@ def create_agent(body: AgentCreateIn, x_demo_role: str = Header(...)):
 
 @router.delete("/api/agents/{agent_id}")
 def delete_agent(agent_id: str, x_demo_role: str = Header(...)):
-    if agent_id in {"analyst-a12","staff-synthesis"}: raise HTTPException(409,"기본 제공 워크플로우는 삭제할 수 없습니다.")
+    if agent_id in {"analyst-a12","staff-synthesis","admin-leave-registration"}: raise HTTPException(409,"기본 제공 워크플로우는 삭제할 수 없습니다.")
     with db() as c:
         agent=row(c.execute("SELECT * FROM agents WHERE id=?",(agent_id,)).fetchone())
         if not agent: raise HTTPException(404,"워크플로우를 찾을 수 없습니다.")
@@ -82,8 +82,8 @@ def validate_definition(d):
     if not nodes: errors.append("워크플로에 노드가 필요합니다.")
     if any(e.get("source") not in ids or e.get("target") not in ids for e in edges): errors.append("연결되지 않은 edge endpoint가 있습니다.")
     if not any("approval" in (n.get("type","")+n.get("id","")) for n in nodes): errors.append("Human Approval 노드가 필요합니다.")
-    send_ids={n.get("id") for n in nodes if "send" in (n.get("type","")+n.get("id",""))}
-    if not send_ids: errors.append("Send Report 노드가 필요합니다.")
+    send_ids={n.get("id") for n in nodes if any(action in (n.get("type","")+n.get("id","")) for action in ("send","intranet_register"))}
+    if not send_ids: errors.append("보고서 발행 또는 시스템 등록 노드가 필요합니다.")
     if nodes and edges:
         incoming={node_id:0 for node_id in ids}; outgoing={node_id:[] for node_id in ids}
         for edge in edges:
@@ -130,7 +130,11 @@ def test_agent(agent_id: str, x_demo_role: str = Header(default="ANALYST")):
         require_role(a["role"],x_demo_role)
         errors=validate_definition(a["definition"])
         if errors: raise HTTPException(422,{"errors":errors})
-        fixture={"sensor_id":"파주-감시센서-03","type":"이동체 감지","area":"경기도 파주시","object_count":4,"confidence":0.94}
+        fixture=({"leave_request_id":"LEAVE-TEST","service_number":"23-12345678","member_name":"김민준","unit":"제1행정부대 본부중대",
+                  "leave_type":"정기 휴가","start_date":"2026-09-18","end_date":"2026-09-20","requested_days":3,"remaining_days":12,
+                  "unit_events":["토요일 당직 편성","일요일 21시 복귀 인원 점검"]}
+                 if a["role"]=="ADMIN" else
+                 {"sensor_id":"파주-감시센서-03","type":"이동체 감지","area":"경기도 파주시","object_count":4,"confidence":0.94})
         eid=create_execution(c,a,fixture,session_for(x_demo_role))
         return {"execution_id":eid}
 
@@ -151,6 +155,31 @@ def sensor_event(body: SensorEventIn, x_demo_role: str = Header(default="ANALYST
         status=c.execute("SELECT status FROM executions WHERE id=?",(eid,)).fetchone()[0]
         return {"event_id":event_id,"execution_id":eid,"status":status}
 
+@router.post("/api/leave-requests")
+def leave_request(body: LeaveRequestIn, x_demo_role: str = Header(default="ADMIN")):
+    require_role("ADMIN",x_demo_role)
+    if not 1 <= body.requested_days <= 15: raise HTTPException(422,"신청 일수는 1~15일 범위여야 합니다.")
+    if body.end_date < body.start_date: raise HTTPException(422,"종료일은 시작일보다 빠를 수 없습니다.")
+    remaining_days=12
+    unit_events=["토요일 당직 편성 인원 확인", "일요일 21시 복귀 인원 점검"]
+    with db() as c:
+        agent=row(c.execute("SELECT * FROM agents WHERE role='ADMIN' AND lifecycle='PUBLISHED' ORDER BY updated_at DESC LIMIT 1").fetchone())
+        if not agent: raise HTTPException(409,"게시된 휴가 검토 워크플로우가 없습니다.")
+        request_id=uid("LEV")
+        payload={**body.model_dump(),"leave_request_id":request_id,"remaining_days":remaining_days,"unit_events":unit_events}
+        eid=create_execution(c,agent,payload,session_for("ADMIN"))
+        c.execute("INSERT INTO leave_requests VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  (request_id,body.service_number,body.member_name,body.unit,body.leave_type,body.start_date,body.end_date,
+                   body.requested_days,remaining_days," · ".join(unit_events),"REVIEWING",eid,now()))
+        status=c.execute("SELECT status FROM executions WHERE id=?",(eid,)).fetchone()[0]
+        return {"leave_request_id":request_id,"execution_id":eid,"status":status,"remaining_days":remaining_days}
+
+@router.get("/api/leave-requests")
+def leave_requests(x_demo_role: str = Header(default="ADMIN")):
+    require_role("ADMIN",x_demo_role)
+    with db() as c:
+        return [row(item) for item in c.execute("SELECT * FROM leave_requests ORDER BY created_at DESC")]
+
 @router.get("/api/executions")
 def executions(role: str):
     with db() as c:
@@ -159,6 +188,7 @@ def executions(role: str):
         if role=="ANALYST": q+=" WHERE role='ANALYST' AND area='경기도 파주시'"
         elif role=="STAFF": q+=" WHERE role IN ('ANALYST','STAFF')"
         elif role=="COMMANDER": q+=" WHERE status='COMPLETED'"
+        elif role=="ADMIN": q+=" WHERE role='ADMIN'"
         return [row(r) for r in c.execute(q+" ORDER BY created_at DESC",params)]
 
 @router.get("/api/executions/{eid}")
@@ -169,6 +199,8 @@ def execution(eid: str):
         e["trace"]=[row(r) for r in c.execute("SELECT * FROM trace WHERE execution_id=? ORDER BY id",(eid,))]
         e["approval"]=row(c.execute("SELECT * FROM approvals WHERE execution_id=?",(eid,)).fetchone())
         e["reports"]=[row(r) for r in c.execute("SELECT * FROM reports WHERE source_execution_id=?",(eid,))]
+        e["intranet_registration"]=row(c.execute(
+            "SELECT ir.* FROM intranet_registrations ir JOIN leave_requests lr ON lr.id=ir.leave_request_id WHERE lr.execution_id=?",(eid,)).fetchone())
         return e
 
 @router.post("/api/approvals/{approval_id}/decision")
@@ -189,9 +221,22 @@ def decision(approval_id: str, body: DecisionIn, x_demo_role: str = Header(...))
         c.commit()
         if body.decision=="REJECT":
             invoke_workflow(c,eid,agent,e["trigger"],{"approval_decision":"REJECT","edited_content":content})
-            c.execute("UPDATE executions SET status='REJECTED',updated_at=? WHERE id=?",(now(),eid)); return {"status":"REJECTED"}
+            c.execute("UPDATE executions SET status='REJECTED',updated_at=? WHERE id=?",(now(),eid))
+            if e["role"]=="ADMIN":
+                c.execute("UPDATE leave_requests SET status='REJECTED' WHERE id=?",(e["trigger"].get("leave_request_id"),))
+            return {"status":"REJECTED"}
         c.execute("UPDATE executions SET status='RUNNING',updated_at=? WHERE id=?",(now(),eid)); c.commit()
         invoke_workflow(c,eid,agent,e["trigger"],{"approval_decision":body.decision,"edited_content":content})
+        if e["role"]=="ADMIN":
+            leave_request_id=e["trigger"].get("leave_request_id")
+            registration_id=uid("INTRA")
+            c.execute("UPDATE leave_requests SET status='REGISTERED' WHERE id=?",(leave_request_id,))
+            c.execute("INSERT OR IGNORE INTO intranet_registrations VALUES(?,?,?,?,?,?)",
+                      (registration_id,leave_request_id,"REGISTERED",content,actor,now()))
+            c.execute("UPDATE executions SET status='COMPLETED',updated_at=? WHERE id=?",(now(),eid))
+            c.execute("INSERT INTO notifications(id,role,title,body,execution_id,created_at) VALUES(?,?,?,?,?,?)",
+                      (uid("NTF"),"ADMIN","휴가 신청 등록 완료",f"{e['trigger'].get('member_name','신청자')}의 휴가 신청이 모의 부대 인트라넷에 등록되었습니다.",eid,now()))
+            return {"status":"COMPLETED","registration_id":registration_id,"leave_request_id":leave_request_id}
         report_id=uid("RPT")
         kind="REGIONAL" if e["role"]=="ANALYST" else "COMMANDER"
         source_ids=[]
@@ -219,6 +264,7 @@ def decision(approval_id: str, body: DecisionIn, x_demo_role: str = Header(...))
 @router.get("/api/reports")
 def reports(role: str):
     with db() as c:
+        if role=="ADMIN": return []
         q="SELECT * FROM reports"
         if role=="ANALYST": q+=" WHERE area='경기도 파주시'"
         elif role=="COMMANDER": q+=" WHERE kind IN ('REGIONAL','COMMANDER')"

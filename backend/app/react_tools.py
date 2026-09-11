@@ -6,20 +6,33 @@ from typing import Any, Callable
 
 
 REACT_TOOLS = [
-    {"id": "query_operational_db", "name": "작전 DB 조회", "kind": "database", "description": "최근 파주시 센서 관측과 이상 징후를 조회합니다."},
-    {"id": "search_reports", "name": "기존 보고서 검색", "kind": "search", "description": "승인 보고서와 과거 파주시 분석 자료를 검색합니다."},
-    {"id": "lookup_region_info", "name": "지역 정보 조회", "kind": "context", "description": "파주시 지형·기상·접경지역 맥락을 조회합니다."},
-    {"id": "synthesize_evidence", "name": "근거 종합", "kind": "function", "description": "수집한 근거를 지휘관 브리핑 초안으로 정리합니다."},
+    {"id": "query_operational_db", "name": "작전 DB 조회", "kind": "database", "roles": ["ANALYST", "STAFF"], "description": "최근 파주시 센서 관측과 이상 징후를 조회합니다."},
+    {"id": "search_reports", "name": "기존 보고서 검색", "kind": "search", "roles": ["ANALYST", "STAFF"], "description": "승인 보고서와 과거 파주시 분석 자료를 검색합니다."},
+    {"id": "lookup_region_info", "name": "지역 정보 조회", "kind": "context", "roles": ["ANALYST", "STAFF"], "description": "파주시 지형·기상·접경지역 맥락을 조회합니다."},
+    {"id": "synthesize_evidence", "name": "근거 종합", "kind": "function", "roles": ["ANALYST", "STAFF"], "description": "수집한 근거를 지휘관 브리핑 초안으로 정리합니다."},
+    {"id": "query_personnel_movements", "name": "외출·외박 현황 조회", "kind": "database", "roles": ["ADMIN"], "description": "이번 주 부대원의 외출·외박 신청과 승인 현황을 조회합니다."},
+    {"id": "lookup_unit_events", "name": "부대 일정 조회", "kind": "context", "roles": ["ADMIN"], "description": "훈련·당직·행사 등 인원 이동에 영향을 주는 이번 주 부대 일정을 조회합니다."},
+    {"id": "search_personnel_rules", "name": "인사 규정 검색", "kind": "search", "roles": ["ADMIN"], "description": "외출·외박 현황 보고에 적용할 인사 행정 기준을 검색합니다."},
+    {"id": "generate_weekly_movement_report", "name": "주간 현황 보고 작성", "kind": "function", "roles": ["ADMIN"], "description": "조회된 인사 자료를 인원·유형·상태별로 종합해 주간 보고서를 작성합니다."},
 ]
 
 
-def default_react_definition(model_id: str) -> dict[str, Any]:
+def tools_for_role(role: str) -> list[dict[str, Any]]:
+    return [tool for tool in REACT_TOOLS if role in tool.get("roles", [])]
+
+
+def default_react_definition(model_id: str, role: str = "ANALYST") -> dict[str, Any]:
+    tools = tools_for_role(role)
     return {
         "schema_version": "1",
-        "system_prompt": "파주시 작전 정보를 조사하는 국방 분석 에이전트입니다. 근거를 먼저 수집하고 간결한 한국어 지휘관 브리핑을 작성하세요.",
+        "system_prompt": (
+            "부대 인사행정을 지원하는 행정병 에이전트입니다. 외출·외박 현황과 부대 일정을 확인하고, 개인정보는 필요한 범위로만 사용해 간결한 한국어 주간 현황 보고를 작성하세요."
+            if role == "ADMIN" else
+            "파주시 작전 정보를 조사하는 국방 분석 에이전트입니다. 근거를 먼저 수집하고 간결한 한국어 지휘관 브리핑을 작성하세요."
+        ),
         "model": {"provider": "openai", "model_id": model_id},
         "max_iterations": 6,
-        "tools": [tool["id"] for tool in REACT_TOOLS],
+        "tools": [tool["id"] for tool in tools],
     }
 
 
@@ -61,4 +74,35 @@ def execute_react_tool(db: Callable, tool_name: str, observations: list[dict[str
                     "※ 본 결과는 세미나용 모의 데이터를 사용했습니다.")
         return {"source": "근거 종합 기능", "evidence_count": sensor_count + report_count + 1,
                 "briefing": briefing, "summary": "수집한 근거를 지휘관 브리핑 초안으로 종합했습니다."}
+    if tool_name == "query_personnel_movements":
+        with db() as connection:
+            records = [dict(item) for item in connection.execute(
+                "SELECT member_name,unit,movement_type,start_at,end_at,status,reason FROM personnel_movements "
+                "ORDER BY start_at DESC LIMIT 20")]
+        return {"source": "모의 인사행정 DB", "records": records,
+                "summary": f"이번 주 외출·외박 기록 {len(records)}건을 확인했습니다."}
+    if tool_name == "lookup_unit_events":
+        return {"source": "모의 부대 일정 시스템", "events": [
+                    {"date": "금요일", "title": "주간 전투체육", "impact": "17시 이후 외출 가능"},
+                    {"date": "토요일", "title": "당직 편성", "impact": "당직 인원 외박 제한"},
+                    {"date": "일요일", "title": "복귀 인원 점검", "impact": "21시까지 복귀"},
+                ], "summary": "이번 주 외출·외박에 영향을 주는 부대 일정 3건을 확인했습니다."}
+    if tool_name == "search_personnel_rules":
+        return {"source": "모의 인사 규정 저장소", "rules": [
+                    "승인된 외출·외박만 현황에 포함", "당직 편성 인원은 제한 사유 표기", "복귀 예정 시각과 승인 상태를 함께 보고",
+                ], "summary": "주간 현황 보고 적용 기준 3건을 확인했습니다."}
+    if tool_name == "generate_weekly_movement_report":
+        movements = next((item["result"] for item in observations if item["tool"] == "query_personnel_movements"), {})
+        records = movements.get("records", [])
+        outings = [item for item in records if item.get("movement_type") == "외출"]
+        overnights = [item for item in records if item.get("movement_type") == "외박"]
+        approved = [item for item in records if item.get("status") == "승인"]
+        pending = [item for item in records if item.get("status") == "대기"]
+        briefing = ("[이번 주 외출·외박 현황 보고]\n\n"
+                    f"1. 총괄: 총 {len(records)}건(외출 {len(outings)}건, 외박 {len(overnights)}건)입니다.\n"
+                    f"2. 상태: 승인 {len(approved)}건, 승인 대기 {len(pending)}건입니다.\n"
+                    "3. 확인사항: 토요일 당직 편성 인원과 일요일 21시 복귀 예정 준수 여부를 확인해야 합니다.\n\n"
+                    "※ 본 결과는 세미나용 모의 인사행정 데이터를 사용했습니다.")
+        return {"source": "주간 현황 보고 작성 기능", "record_count": len(records), "briefing": briefing,
+                "summary": "이번 주 외출·외박 현황 보고서를 작성했습니다."}
     raise ValueError(f"지원하지 않는 도구입니다: {tool_name}")

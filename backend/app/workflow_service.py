@@ -21,10 +21,18 @@ STAFF_NODES = [
     ("context", "접경지역 작전상황 조회", "data"), ("synthesis", "위협 종합·초안 생성", "ai"),
     ("approval", "참모 검토·승인", "control"), ("send", "지휘관 보고서 발행", "action"),
 ]
+ADMIN_NODES = [
+    ("leave_request", "정기 휴가 신청 접수", "trigger"),
+    ("leave_balance", "잔여 휴가 조회", "data"),
+    ("unit_events", "부대 일정 조회", "data"),
+    ("leave_summary", "휴가 신청 요약 생성", "ai"),
+    ("approval", "행정병 검토·승인", "control"),
+    ("intranet_register", "부대 인트라넷 등록", "action"),
+]
 
 def graph(role: str) -> dict[str, Any]:
     """역할별 기본 워크플로우 정의를 Builder JSON 형식으로 만든다."""
-    source = ANALYST_NODES if role == "ANALYST" else STAFF_NODES
+    source = {"ANALYST": ANALYST_NODES, "STAFF": STAFF_NODES, "ADMIN": ADMIN_NODES}[role]
     nodes = []
     for i, (node_id, label, group) in enumerate(source):
         x = 80 + (i % 4) * 230
@@ -33,8 +41,9 @@ def graph(role: str) -> dict[str, Any]:
         if node_id == "filter": config = {"min_confidence": 0.8, "min_object_count": 2}
         elif node_id == "threat": config = {"system_prompt": "대한민국 접경지역 센서 이벤트를 분석해 위협 수준, 근거 요약과 분석관 승인용 지역 보고서 초안을 한국어로 작성하세요."}
         elif node_id == "synthesis": config = {"system_prompt": "승인된 접경지역 보고를 종합해 위협 수준, 우선 대응 지역과 참모 승인용 지휘관 보고서 초안을 한국어로 작성하세요."}
+        elif node_id == "leave_summary": config = {"system_prompt": "휴가 신청자의 잔여 휴가, 신청 기간과 부대 일정을 검토해 행정병 승인용 요약을 한국어로 작성하세요. 개인정보는 신청 처리에 필요한 범위로만 표시하세요."}
         elif node_id == "context": config = {"query": "최근 24시간 작전 정보와 관련 관측 기록"}
-        if node_id in {"threat", "synthesis"}: config["model_id"] = GATEWAY.model
+        if node_id in {"threat", "synthesis", "leave_summary"}: config["model_id"] = GATEWAY.model
         nodes.append({"id": node_id, "type": node_id, "label": label, "group": group,
                       "position": {"x": x, "y": y}, "config": config})
     edges = [{"id": f"e-{i}", "source": source[i][0], "target": source[i+1][0]}
@@ -67,9 +76,9 @@ def invoke_workflow(c, eid: str, agent: dict, trigger_payload: dict, resume: dic
                 trace(c,eid,node_id,label,"WAITING",inp=f"보고서 초안 {len(draft)}자",out="명시적 승인 대기")
                 c.execute("UPDATE executions SET status=?,updated_at=? WHERE id=?",
                           (f"WAITING_FOR_{role}_APPROVAL",now(),eid))
-                reviewer="분석관" if role=="ANALYST" else "참모"
+                reviewer={"ANALYST":"분석관","STAFF":"참모","ADMIN":"행정병"}[role]
                 c.execute("INSERT INTO notifications(id,role,title,body,execution_id,created_at) VALUES(?,?,?,?,?,?)",(uid("NTF"),role,f"{reviewer} 승인 요청",
-                          "AI가 생성한 보고서 초안이 승인을 기다리고 있습니다.",eid,now()))
+                          "AI가 생성한 검토 요약이 승인을 기다리고 있습니다." if role=="ADMIN" else "AI가 생성한 보고서 초안이 승인을 기다리고 있습니다.",eid,now()))
                 c.commit(); existing={"id":approval_id,"draft":draft}
             return {"approval_id":existing["id"],"reviewer_role":role,"draft":existing["draft"]}
         if phase == "after_interrupt":
@@ -90,6 +99,11 @@ def invoke_workflow(c, eid: str, agent: dict, trigger_payload: dict, resume: dic
             "report_trigger": f"승인 보고 {event.get('report_id','-')}",
             "reports": f"보고 이벤트 {event.get('event_id','-')}",
             "synthesis": f"승인 지역보고 {len(state.get('source_report_ids',[]))}건",
+            "leave_request": f"{event.get('member_name','신청자')} · {event.get('leave_type','휴가 신청')}",
+            "leave_balance": f"군번 {event.get('service_number','-')}",
+            "unit_events": f"{event.get('start_date','-')} ~ {event.get('end_date','-')}",
+            "leave_summary": f"신청 {event.get('requested_days','-')}일 · 잔여 {state.get('remaining_days',event.get('remaining_days','-'))}일",
+            "intranet_register": f"승인된 휴가 신청 {event.get('leave_request_id','-')}",
             "generator": f"위협 {state.get('threat_level','-')} · 분석 요약",
             "send": f"승인된 초안 {len(state.get('draft',''))}자",
         }.get(capability,f"{label} state")
@@ -114,6 +128,25 @@ def invoke_workflow(c, eid: str, agent: dict, trigger_payload: dict, resume: dic
                 schema={"type":"object","properties":{"overall_threat_level":{"type":"string","enum":["LOW","MEDIUM","HIGH"]},"summary":{"type":"string"},"priority_areas":{"type":"array","items":{"type":"string"}},"source_report_ids":{"type":"array","items":{"type":"string"}},"draft":{"type":"string"}},"required":["overall_threat_level","summary","priority_areas","source_report_ids","draft"],"additionalProperties":False},
                 model=config.get("model_id"))
             output=f"{result['overall_threat_level']} · {result['summary']}"; updates.update(result); updates["threat_level"]=result["overall_threat_level"]
+        elif capability=="leave_balance":
+            remaining=int(event.get("remaining_days",12))
+            output=f"잔여 휴가 {remaining}일 조회"; updates["remaining_days"]=remaining
+        elif capability=="unit_events":
+            events=event.get("unit_events",["토요일 당직 편성", "일요일 21시 복귀 인원 점검"])
+            output=f"관련 부대 일정 {len(events)}건 조회"; updates["related_unit_events"]=events
+        elif capability=="leave_summary":
+            request={**event,"remaining_days":state.get("remaining_days",event.get("remaining_days",12)),
+                     "unit_events":state.get("related_unit_events",event.get("unit_events",[]))}
+            result=GATEWAY.structured(name="leave_request_summary",
+                instructions=config.get("system_prompt","휴가 신청의 잔여 일수와 부대 일정을 검토해 승인용 요약을 작성하세요."),
+                payload={"leave_request":request},
+                schema={"type":"object","properties":{"eligible":{"type":"boolean"},"summary":{"type":"string"},
+                        "conflicts":{"type":"array","items":{"type":"string"}},"draft":{"type":"string"}},
+                        "required":["eligible","summary","conflicts","draft"],"additionalProperties":False},
+                model=config.get("model_id"))
+            output=("처리 가능" if result["eligible"] else "확인 필요")+f" · {result['summary']}"; updates.update(result)
+        elif capability=="intranet_register":
+            output="승인 결과를 모의 부대 인트라넷 인사행정 시스템에 등록"
         elif capability=="generator":
             level=state.get("threat_level","미정"); summary=state.get("summary",default_draft)
             draft=f"[{agent['area']} 상황 보고]\n위협 수준: {level}\n\n{summary}\n\n권고: {config.get('recommendation','관련 감시 자산을 유지하고 승인된 절차에 따라 후속 조치하십시오.')}"
@@ -135,7 +168,7 @@ def create_execution(c, agent, trigger_payload, initiating, source_report_id=Non
     eid = uid("EXE")
     snap = agent["definition"] if isinstance(agent["definition"], str) else json.dumps(agent["definition"], ensure_ascii=False)
     c.execute("INSERT INTO executions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(eid,agent["id"],agent["name"],agent["role"],
-              agent["area"],agent["version"],"RUNNING","SENSOR_EVENT" if agent["role"]=="ANALYST" else "APPROVED_REPORT",
+              agent["area"],agent["version"],"RUNNING",{"ANALYST":"SENSOR_EVENT","STAFF":"APPROVED_REPORT","ADMIN":"LEAVE_REQUEST"}[agent["role"]],
               json.dumps(trigger_payload,ensure_ascii=False),snap,json.dumps(initiating),source_report_id,None,now(),now()))
     c.commit()
     try:

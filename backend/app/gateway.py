@@ -79,6 +79,14 @@ class ModelGateway:
                 return {"thought_summary": "이전 대화 결과만으로 답할 수 있어 추가 도구를 호출하지 않습니다.", "action": "FINAL",
                         "action_input": "", "final_answer": previous or "이전 분석 결과를 확인했습니다."}
             candidates: list[tuple[str, str]] = []
+            if any(word in goal for word in ("외출", "외박", "인원", "이번주", "이번 주")):
+                candidates.append(("query_personnel_movements", "이번 주 외출·외박 현황을 인사행정 DB에서 조회합니다."))
+            if any(word in goal for word in ("일정", "훈련", "당직", "외출", "외박")):
+                candidates.append(("lookup_unit_events", "현황에 영향을 주는 부대 일정을 확인합니다."))
+            if any(word in goal for word in ("규정", "기준", "보고")):
+                candidates.append(("search_personnel_rules", "현황 보고에 적용할 인사행정 기준을 확인합니다."))
+            if any(word in goal for word in ("외출", "외박")) and any(word in goal for word in ("보고", "작성", "현황")):
+                candidates.append(("generate_weekly_movement_report", "조회한 인사 자료를 주간 현황 보고로 종합합니다."))
             if any(word in goal for word in ("센서", "이상", "징후", "최근", "작전")):
                 candidates.append(("query_operational_db", "요청에 필요한 최근 작전·센서 데이터를 확인합니다."))
             if any(word in goal for word in ("보고서", "비교", "과거", "기존", "브리핑")):
@@ -91,7 +99,8 @@ class ModelGateway:
             for action, summary in plan:
                 if action not in completed:
                     return {"thought_summary": summary, "action": action, "action_input": "경기도 파주시", "final_answer": ""}
-            synthesis = next((item.get("result", {}) for item in observations if item.get("tool") == "synthesize_evidence"), {})
+            synthesis = next((item.get("result", {}) for item in observations
+                              if item.get("tool") in {"synthesize_evidence", "generate_weekly_movement_report"}), {})
             summaries = [item.get("result", {}).get("summary", "") for item in observations if item.get("result", {}).get("summary")]
             return {"thought_summary": "현재 요청에 필요한 정보가 확보되어 답변을 제시합니다.", "action": "FINAL",
                     "action_input": "", "final_answer": synthesis.get("briefing") or "\n".join(summaries) or "요청 내용을 확인했습니다."}
@@ -102,6 +111,18 @@ class ModelGateway:
             summary=f"이동체 {count}개, 센서 신뢰도 {confidence:.2f}를 분석했습니다."
             return {"threat_level": level, "summary": summary, "evidence_ids": ["OBS-PJU-017", "CTX-PJU-003"],
                     "draft": f"[파주시 지역 보고]\n위협 수준: {level}\n\n{summary}\n\n관련 감시 자산의 지속 운용을 권고합니다."}
+        if name == "leave_request_summary":
+            request = payload.get("leave_request", {})
+            remaining = int(request.get("remaining_days", 0))
+            requested = int(request.get("requested_days", 0))
+            eligible = remaining >= requested
+            member = request.get("member_name", "신청자")
+            summary = f"{member}의 잔여 휴가 {remaining}일과 신청 {requested}일, 관련 부대 일정을 확인했습니다."
+            return {"eligible": eligible, "summary": summary,
+                    "conflicts": request.get("unit_events", []),
+                    "draft": (f"[정기 휴가 신청 검토]\n신청자: {member}\n신청 기간: {request.get('start_date')} ~ {request.get('end_date')}"
+                              f"\n신청 일수: {requested}일 / 잔여 휴가: {remaining}일\n\n{summary}\n\n"
+                              + ("승인 후 부대 인트라넷 등록이 가능합니다." if eligible else "잔여 휴가가 부족하여 반려 검토가 필요합니다."))}
         summary="파주시 신규 징후를 접경지역 최우선 대응 요소로 평가했습니다."
         return {"overall_threat_level": "HIGH", "summary": summary,
                 "priority_areas": ["경기도 파주시", "경기도 연천군"], "source_report_ids": payload.get("source_report_ids", []),

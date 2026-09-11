@@ -27,6 +27,10 @@ class WorkflowState(TypedDict, total=False):
     summary: str
     priority_areas: list[str]
     filtered: bool
+    remaining_days: int
+    related_unit_events: list[str]
+    eligible: bool
+    conflicts: list[str]
 
 
 Runner = Callable[[dict[str, Any], WorkflowState, str], dict[str, Any]]

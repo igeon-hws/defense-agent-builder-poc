@@ -15,7 +15,7 @@ def health(): return {"status":"ok",**GATEWAY.status(),"database":str(DB_PATH)}
 
 @router.get("/api/models")
 def models(x_demo_role: str = Header(...)):
-    if x_demo_role not in {"ANALYST","STAFF"}: raise HTTPException(403,"워크플로우 편집 권한이 없습니다.")
+    if x_demo_role not in {"ANALYST","STAFF","ADMIN"}: raise HTTPException(403,"워크플로우 편집 권한이 없습니다.")
     return [{"id":model,"label":model,"default":model==GATEWAY.model} for model in GATEWAY.allowed_models]
 
 @router.post("/api/session")
@@ -26,7 +26,7 @@ def dashboard(role: str):
     with db() as c:
         agents=c.execute("SELECT count(*) n FROM agents WHERE role=? AND owner=?",(role,session_for(role)["user_id"])).fetchone()[0]
         pending=c.execute("SELECT count(*) FROM approvals WHERE reviewer_role=? AND status='PENDING'",(role,)).fetchone()[0]
-        active=c.execute("SELECT count(*) FROM executions WHERE status NOT IN ('COMPLETED','REJECTED','FAILED')").fetchone()[0]
+        active=c.execute("SELECT count(*) FROM executions WHERE role=? AND status NOT IN ('COMPLETED','REJECTED','FAILED')",(role,)).fetchone()[0]
         notes=[row(r) for r in c.execute("SELECT * FROM notifications WHERE role=? ORDER BY created_at DESC LIMIT 5",(role,))]
         unread_query="SELECT count(*) FROM notifications WHERE role=? AND read_at IS NULL"
         unread_params: tuple[Any,...]=(role,)
@@ -38,7 +38,7 @@ def dashboard(role: str):
 
 @router.post("/api/notifications/{notification_id}/read")
 def read_notification(notification_id: str, x_demo_role: str = Header(...)):
-    if x_demo_role not in {"ANALYST","STAFF","COMMANDER"}:
+    if x_demo_role not in {"ANALYST","STAFF","COMMANDER","ADMIN"}:
         raise HTTPException(403,"알림을 확인할 권한이 없습니다.")
     with db() as c:
         notification=c.execute("SELECT * FROM notifications WHERE id=? AND role=?",(notification_id,x_demo_role)).fetchone()
@@ -50,7 +50,7 @@ def read_notification(notification_id: str, x_demo_role: str = Header(...)):
 
 @router.get("/api/situation-board")
 def situation_board(role: str):
-    if role not in {"ANALYST","STAFF","COMMANDER"}: raise HTTPException(400,"지원하지 않는 역할입니다.")
+    if role not in {"ANALYST","STAFF","COMMANDER","ADMIN"}: raise HTTPException(400,"지원하지 않는 역할입니다.")
     with db() as c:
         events=[row(r) for r in c.execute("SELECT * FROM sensor_events ORDER BY created_at DESC LIMIT 8")]
         notes=[row(r) for r in c.execute("SELECT * FROM notifications WHERE role=? ORDER BY created_at DESC LIMIT 8",(role,))]

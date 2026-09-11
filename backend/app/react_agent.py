@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .gateway import ModelGateway, ModelGatewayError
-from .react_tools import REACT_TOOLS, default_react_definition, execute_react_tool
+from .react_tools import default_react_definition, execute_react_tool, tools_for_role
 
 
 class ReactAgentCreateIn(BaseModel):
@@ -64,8 +64,9 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
         enabled = definition.get("tools", [])
         max_iterations = max(5, min(8, int(definition.get("max_iterations", 6))))
         observations: list[dict[str, Any]] = []
+        role_tools = tools_for_role(agent["role"])
         catalog = [{"id": tool["id"], "name": tool["name"], "description": tool["description"]}
-                   for tool in REACT_TOOLS if tool["id"] in enabled]
+                   for tool in role_tools if tool["id"] in enabled]
         yield json.dumps(save_event(run_id, "run_started", "요청 접수", prompt,
                                     payload={"run_id": run_id, "context_turns": len(context), "context_window": 3}), ensure_ascii=False) + "\n"
         try:
@@ -105,14 +106,18 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
                     observations.append({"tool": "runtime_validation", "result": validation})
                     yield json.dumps(save_event(run_id, "tool_result", "도구 호출 생략", validation["error"], action, validation), ensure_ascii=False) + "\n"
                     continue
-                if action == "synthesize_evidence" and not completed.intersection({"query_operational_db", "search_reports", "lookup_region_info"}):
+                synthesis_inputs = {
+                    "synthesize_evidence": {"query_operational_db", "search_reports", "lookup_region_info"},
+                    "generate_weekly_movement_report": {"query_personnel_movements", "lookup_unit_events", "search_personnel_rules"},
+                }
+                if action in synthesis_inputs and not completed.intersection(synthesis_inputs[action]):
                     validation = {"error": "근거 종합 전에 요청에 필요한 조회 도구를 하나 이상 실행해야 합니다."}
                     observations.append({"tool": "runtime_validation", "result": validation})
                     yield json.dumps(save_event(run_id, "tool_result", "입력 조건 확인", validation["error"], action, validation), ensure_ascii=False) + "\n"
                     continue
                 result = execute_react_tool(db, action, observations)
                 observations.append({"tool": action, "result": result})
-                meta = next(tool for tool in REACT_TOOLS if tool["id"] == action)
+                meta = next(tool for tool in role_tools if tool["id"] == action)
                 yield json.dumps(save_event(run_id, "tool_result", meta["name"], result.get("summary", "조회가 완료되었습니다."), action, result), ensure_ascii=False) + "\n"
                 time.sleep(.18)
             raise ModelGatewayError(f"최대 반복 횟수({max_iterations}) 안에 응답을 완료하지 못했습니다.")
@@ -123,13 +128,13 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
 
     @router.get("/react-tools")
     def tools(x_demo_role: str = Header(...)):
-        if x_demo_role not in {"ANALYST", "STAFF"}:
+        if x_demo_role not in {"ANALYST", "STAFF", "ADMIN"}:
             raise HTTPException(403, "에이전트 도구를 사용할 권한이 없습니다.")
-        return REACT_TOOLS
+        return tools_for_role(x_demo_role)
 
     @router.get("/react-agents")
     def agents(role: str, x_demo_role: str = Header(...)):
-        if role != x_demo_role or role not in {"ANALYST", "STAFF"}:
+        if role != x_demo_role or role not in {"ANALYST", "STAFF", "ADMIN"}:
             raise HTTPException(403, "에이전트 레지스트리에 접근할 권한이 없습니다.")
         with db() as connection:
             return [deserialize(item) for item in connection.execute(
@@ -137,14 +142,14 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
 
     @router.post("/react-agents")
     def create_agent(body: ReactAgentCreateIn, x_demo_role: str = Header(...)):
-        if x_demo_role not in {"ANALYST", "STAFF"}:
+        if x_demo_role not in {"ANALYST", "STAFF", "ADMIN"}:
             raise HTTPException(403, "에이전트를 만들 권한이 없습니다.")
         agent_id = uid("RAG").lower()
         with db() as connection:
             connection.execute("INSERT INTO react_agents VALUES(?,?,?,?,?,?,?,?,?)",
                                (agent_id, body.name.strip() or "새 조사 에이전트", body.description, x_demo_role,
                                 session_for(x_demo_role)["user_id"], "DRAFT", 0,
-                                json.dumps(default_react_definition(gateway.model), ensure_ascii=False), now()))
+                                json.dumps(default_react_definition(gateway.model, x_demo_role), ensure_ascii=False), now()))
         return {"id": agent_id}
 
     @router.get("/react-agents/{agent_id}")
@@ -159,7 +164,8 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
         with db() as connection:
             agent = deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone())
             require_agent(agent, x_demo_role)
-            allowed, selected = {tool["id"] for tool in REACT_TOOLS}, body.definition.get("tools", [])
+            allowed = {tool["id"] for tool in tools_for_role(x_demo_role)}
+            selected = body.definition.get("tools", [])
             if not selected or any(tool not in allowed for tool in selected):
                 raise HTTPException(422, "지원되는 도구를 하나 이상 연결해야 합니다.")
             body.definition["max_iterations"] = max(5, min(8, int(body.definition.get("max_iterations", 6))))
@@ -179,7 +185,7 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
 
     @router.delete("/react-agents/{agent_id}")
     def delete_agent(agent_id: str, x_demo_role: str = Header(...)):
-        if agent_id == "react-paju-briefing":
+        if agent_id in {"react-paju-briefing", "react-weekly-movement"}:
             raise HTTPException(409, "기본 제공 에이전트는 삭제할 수 없습니다.")
         with db() as connection:
             agent = deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone())

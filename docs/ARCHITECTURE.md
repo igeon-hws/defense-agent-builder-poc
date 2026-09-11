@@ -81,6 +81,8 @@ Minimum logical records (tables can be simplified while retaining these invarian
 | sensor_events | Simulator payload and processing outcome |
 | react_agents / react_chat_sessions / react_agent_runs | ReAct 설정, 소유자, 사용자별 채팅 세션, 사용자 목표와 최종 상태 |
 | react_agent_events | 공개 가능한 판단·도구 관찰 스트림과 최종 브리핑 완료 이벤트 |
+| leave_requests / intranet_registrations | 휴가 신청 원문, 잔여 일수·부대 일정 요약, 승인 상태와 모의 인트라넷 등록 결과 |
+| personnel_movements | 주간 외출·외박 현황 보고용 가상 인사행정 기록 |
 
 Only approved content enters the reports collection; drafts live in runtime/approval state. Send Report commits a REGIONAL report and its pending event in one SQLite transaction. The dispatcher reads the committed report and creates the Staff execution with a uniqueness constraint on (event_id, target_agent_id, target_version). Mark dispatched only after execution creation succeeds; recover pending items on startup. Duplicate notification delivery therefore cannot create a second Staff run. Use a unique finalized report key per execution/output to guard replay.
 
@@ -104,5 +106,12 @@ Expose generate(messages, model_config) and structured_generate(messages, schema
 | Execution | GET /api/executions and /api/executions/{id}; GET .../trace |
 | Approval | POST /api/approvals/{id}/decision with APPROVE, EDIT_APPROVE or REJECT and optional edited content/comment |
 | Read models | GET /api/reports, /api/situation-board, /api/dashboard |
+| Personnel administration | POST/GET /api/leave-requests; 승인 후 execution detail에서 intranet_registration 확인 |
 
 Backend applies the same small role/area policy to reads, node validation and approval actions as the frontend. Return clear validation, forbidden-role, conflict/stale-decision and provider error messages. This is demo policy, not a production RBAC/ABAC system. Send to Superior/Commander means in-app report availability, not email or an external system integration.
+
+## 행정병 실행 경로
+
+`정기 휴가 신청 접수 → 잔여 휴가 조회 → 부대 일정 조회 → 휴가 신청 요약 생성 → 행정병 HITL → 부대 인트라넷 등록`을 세 번째 LangGraph 템플릿으로 제공한다. 승인 전에는 인트라넷 등록 행을 만들지 않는다. 승인 후 `leave_requests.status=REGISTERED`와 `intranet_registrations`를 함께 저장하며, 현재 인트라넷은 명시적인 mock 시스템이다.
+
+행정병 ReAct 에이전트에는 `query_personnel_movements`, `lookup_unit_events`, `search_personnel_rules`, `generate_weekly_movement_report`만 노출한다. 분석관·참모용 작전 도구와 행정용 인사 도구는 역할별 카탈로그에서 분리한다.

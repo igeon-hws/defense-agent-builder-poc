@@ -64,16 +64,27 @@ def row(record):
 def session_for(role: str) -> dict[str, Any]:
     """데모 역할에 대응하는 고정 사용자 세션을 반환한다."""
     role = role.upper()
-    if role not in {"ANALYST", "STAFF", "COMMANDER"}:
+    if role not in {"ANALYST", "STAFF", "COMMANDER", "ADMIN"}:
         raise HTTPException(400, "지원하지 않는 역할입니다.")
     return {
-        "user_id": {"ANALYST": "analyst.a12", "STAFF": "staff.ops", "COMMANDER": "commander.demo"}[role],
+        "user_id": {
+            "ANALYST": "analyst.a12",
+            "STAFF": "staff.ops",
+            "COMMANDER": "commander.demo",
+            "ADMIN": "admin.hr01",
+        }[role],
         "role": role,
-        "area": "경기도 파주시" if role == "ANALYST" else "접경지역 전체",
+        "area": {
+            "ANALYST": "경기도 파주시",
+            "STAFF": "접경지역 전체",
+            "COMMANDER": "접경지역 전체",
+            "ADMIN": "제1행정부대",
+        }[role],
         "permissions": {
             "ANALYST": ["agent:create", "agent:edit", "agent:publish", "agent:delete", "sensor:emit", "review:analyst"],
             "STAFF": ["agent:create", "agent:edit", "agent:publish", "agent:delete", "review:staff"],
             "COMMANDER": ["report:read", "situation:read"],
+            "ADMIN": ["agent:create", "agent:edit", "agent:publish", "agent:delete", "leave:receive", "review:admin", "personnel:read"],
         }[role],
     }
 

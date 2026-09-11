@@ -63,7 +63,15 @@ Workflow Registry는 현재 세션의 사용자 ID를 기준으로 소유 워크
 | Minimal | Static role filtering, in-app notifications, report viewer, Situation Board, Commander read-only view, audit history |
 | Excluded unless explicitly requested | Kafka/message broker, Kubernetes, advanced military GIS layers, real Data Fabric, real sensors, production auth, full RBAC/ABAC, local-model serving |
 
-Do not add an administrative/office workflow, real MCP integrations, separate microservices, arbitrary code nodes, or elaborate Workflow deployment approval. These are future examples/platform capabilities, not requirements for this week.
+행정병용 병역관리·인사행정 데모를 포함한다. 실제 MCP 연동, 별도 마이크로서비스, 임의 코드 노드와 복잡한 Workflow 배포 승인은 후속 범위다.
+
+## 행정병 유즈케이스
+
+- `ADMIN` 데모 사용자는 본인 소유 워크플로우·ReAct 에이전트와 인사행정 데이터만 사용한다.
+- 정기 휴가 신청이 들어오면 잔여 휴가와 신청 기간의 부대 일정을 조회하고 LLM이 승인용 요약을 작성한다.
+- LangGraph HITL에서 행정병이 승인하면 모의 부대 인트라넷 등록을 생성하고, 반려하면 등록하지 않는다.
+- “이번 주차 외출/외박 현황 보고 작성해줘” 요청은 인사행정 DB, 부대 일정과 관련 규정을 필요한 순서로 조회해 주간 보고서를 스트리밍한다.
+- 군번·성명 등 개인정보는 데모용 가상 데이터이며 처리 목적에 필요한 범위로만 표시한다.
 
 ## Delivery order (five working days)
 

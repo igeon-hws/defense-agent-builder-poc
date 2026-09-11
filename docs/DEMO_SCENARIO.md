@@ -62,7 +62,7 @@ Each AI node produces its role-specific draft before approval. After each approv
 
 | ID | Given / When | Pass condition |
 | --- | --- | --- |
-| AC-01 | Login/switch through all three roles | Correct workflow/node/data scope; Commander read-only; no production login infrastructure |
+| AC-01 | Login/switch through all four roles | Correct workflow/node/data scope; Commander read-only; 행정병은 인사행정 범위; no production login infrastructure |
 | AC-02 | 지원 노드, edge와 설정을 변경하고 저장·새로고침 | 그래프와 설정이 유지되고 실행에 반영된다. 잘못된 endpoint, 단일 시작점 위반, 승인·발행 노드 누락은 검증에서 실패한다. |
 | AC-02A | Create a blank role-compatible Workflow | A new DRAFT is persisted, opens in Builder, survives refresh, and exposes only role-compatible nodes |
 | AC-02B | Connect, validate and publish the new Workflow | An immutable version snapshot is created; Registry shows it and the published graph can start a real LangGraph execution |
@@ -85,6 +85,9 @@ Each AI node produces its role-specific draft before approval. After each approv
 | AC-19 | ReAct 에이전트가 최종 브리핑 생성 | 응답 청크가 스트리밍되고 실행이 COMPLETED가 되며 최종 내용이 저장된다. 실행 전 입력 중인 프롬프트는 대화 기록에 미리 표시되지 않는다. |
 | AC-20 | 채팅 세션 컨텍스트 관리 | 같은 세션의 후속 요청은 최근 완료 3턴을 참조하고, 새 세션은 빈 컨텍스트로 시작한다. 세션 선택 시 기록이 복원되며 삭제 시 해당 실행과 이벤트도 제거된다. |
 | AC-21 | 요청별 ReAct 도구 선택 | 단순 후속 요약은 도구 없이 완료할 수 있고, 센서 조회 요청은 작전 DB만 선택할 수 있다. 전체 브리핑 요청은 모델 판단에 따라 필요한 복수 도구를 선택하며 런타임이 미사용 도구를 강제로 실행하지 않는다. |
+| AC-22 | 행정병이 정기 휴가 신청을 접수 | 잔여 휴가와 관련 부대 일정이 조회되고 AI 요약 후 WAITING_FOR_ADMIN_APPROVAL에서 중단된다. |
+| AC-23 | 행정병이 휴가 신청 승인·반려 | 승인 시 같은 LangGraph 실행이 재개되어 모의 인트라넷 등록이 한 건 생성된다. 반려 시 등록 없이 REJECTED로 종료된다. |
+| AC-24 | 행정병 ReAct 에이전트에 주간 외출·외박 보고 요청 | 행정 전용 도구만 사용해 현황·일정·규정을 조회하고 주간 보고서를 NDJSON으로 스트리밍한다. |
 
 ## Verification evidence and completion
 

@@ -42,6 +42,13 @@ def initialize_database():
           title TEXT, created_at TEXT, updated_at TEXT);
         CREATE TABLE IF NOT EXISTS react_agent_events(id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, event_type TEXT,
           title TEXT, content TEXT, tool_name TEXT, payload TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS leave_requests(id TEXT PRIMARY KEY, service_number TEXT, member_name TEXT, unit TEXT,
+          leave_type TEXT, start_date TEXT, end_date TEXT, requested_days INTEGER, remaining_days INTEGER,
+          unit_event_summary TEXT, status TEXT, execution_id TEXT, created_at TEXT);
+        CREATE TABLE IF NOT EXISTS intranet_registrations(id TEXT PRIMARY KEY, leave_request_id TEXT UNIQUE,
+          status TEXT, summary TEXT, registered_by TEXT, registered_at TEXT);
+        CREATE TABLE IF NOT EXISTS personnel_movements(id TEXT PRIMARY KEY, member_name TEXT, unit TEXT,
+          movement_type TEXT, start_at TEXT, end_at TEXT, status TEXT, reason TEXT);
         """)
         # 별도 마이그레이션 도구 대신 필요한 컬럼만 안전하게 보강한다.
         notification_columns={column["name"] for column in c.execute("PRAGMA table_info(notifications)")}
@@ -56,6 +63,11 @@ def initialize_database():
             c.execute("INSERT INTO react_agents VALUES(?,?,?,?,?,?,?,?,?)",
                       ("react-paju-briefing","파주시 이상징후 조사 에이전트","작전 DB와 승인 보고서, 지역 정보를 조사해 지휘관 브리핑을 작성합니다.",
                        "ANALYST","analyst.a12","PUBLISHED",1,json.dumps(definition,ensure_ascii=False),now()))
+        admin_react_definition=default_react_definition(GATEWAY.model,"ADMIN")
+        c.execute("INSERT OR IGNORE INTO react_agents VALUES(?,?,?,?,?,?,?,?,?)",
+                  ("react-weekly-movement","주간 외출·외박 현황 보고 에이전트",
+                   "인사행정 DB와 부대 일정, 관련 규정을 조회해 이번 주 외출·외박 현황 보고서를 작성합니다.",
+                   "ADMIN","admin.hr01","PUBLISHED",1,json.dumps(admin_react_definition,ensure_ascii=False),now()))
         for saved_agent in c.execute("SELECT id,definition FROM react_agents").fetchall():
             saved_definition=json.loads(saved_agent["definition"])
             if "require_approval" in saved_definition:
@@ -70,6 +82,21 @@ def initialize_database():
                           "PUBLISHED", 1, json.dumps(graph(role), ensure_ascii=False), now()))
                 c.execute("INSERT OR IGNORE INTO agent_versions VALUES(?,?,?,?)",
                           (agent_id, 1, json.dumps(graph(role), ensure_ascii=False), now()))
+        admin_definition=graph("ADMIN")
+        c.execute("INSERT OR IGNORE INTO agents VALUES(?,?,?,?,?,?,?,?,?)",
+                  ("admin-leave-registration","정기 휴가 검토·등록 워크플로우","ADMIN","제1행정부대","admin.hr01",
+                   "PUBLISHED",1,json.dumps(admin_definition,ensure_ascii=False),now()))
+        c.execute("INSERT OR IGNORE INTO agent_versions VALUES(?,?,?,?)",
+                  ("admin-leave-registration",1,json.dumps(admin_definition,ensure_ascii=False),now()))
+        if not c.execute("SELECT 1 FROM personnel_movements").fetchone():
+            for movement in [
+                ("MOV-001","김민준","본부중대","외출","2026-09-11 17:30","2026-09-11 21:00","승인","개인 용무"),
+                ("MOV-002","이준호","본부중대","외박","2026-09-12 09:00","2026-09-13 20:30","승인","가족 행사"),
+                ("MOV-003","박서준","지원중대","외출","2026-09-12 13:00","2026-09-12 18:00","대기","개인 용무"),
+                ("MOV-004","최도윤","지원중대","외박","2026-09-12 09:00","2026-09-13 20:30","승인","정기 외박"),
+                ("MOV-005","정우진","본부중대","외출","2026-09-13 14:00","2026-09-13 19:00","대기","면회"),
+            ]:
+                c.execute("INSERT INTO personnel_movements VALUES(?,?,?,?,?,?,?,?)",movement)
         if not c.execute("SELECT 1 FROM reports WHERE fixture=1").fetchone():
             for rid, area, threat, content in [
                 ("RPT-B07-SEED", "경기도 연천군", "MEDIUM", "연천군 북부에서 반복 이동 징후가 식별되었습니다."),

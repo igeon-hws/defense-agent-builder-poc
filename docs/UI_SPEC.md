@@ -127,3 +127,12 @@ Waiting state provides the same approval drawer. Refresh restores state from per
 ## Shared failure and accessibility behavior
 
 Preserve valid user input on API errors. Show contextual loading/empty/error states; unavailable LLM reports a real failure. Label deterministic rehearsal mode prominently. Use keyboard-focusable buttons, explicit labels and visible focus; preserve readable contrast and provide text for all status colors. Keep decorative work secondary to Builder clarity and reliable live demonstration.
+
+## 행정병 화면
+
+- 로그인과 상단 역할 선택에 `행정병`을 추가한다.
+- 행정병 메뉴에는 대시보드, 두 빌더와 레지스트리, 실행 모니터링, 사용 매뉴얼, `휴가 신청 입력`을 표시한다.
+- 휴가 신청 입력은 군번, 성명, 소속, 휴가 종류, 시작·종료일과 신청 일수를 받는다. 접수 결과에서 실행 상세로 이동한다.
+- 실행 승인 drawer는 잔여 휴가, 관련 부대 일정, AI 검토 요약과 인트라넷 등록 예정 내용을 표시한다.
+- 승인 완료 후 실행 상세에 모의 인트라넷 등록 ID와 등록자를 표시한다.
+- 행정병 에이전트 채팅의 기본 요청은 “이번 주차 외출/외박 현황 보고 작성해줘”이며, 우측에 인사 DB·부대 일정·규정 검색·보고 작성 과정을 표시한다.
