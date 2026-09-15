@@ -31,7 +31,7 @@ def nodes(role: str, x_demo_role: str = Header(...)):
 
 @router.get("/api/connectors")
 def connectors(x_demo_role: str = Header(...)):
-    if x_demo_role not in {"ANALYST","STAFF","ADMIN"}:
+    if x_demo_role not in {"ANALYST","STAFF","COMMANDER","ADMIN"}:
         raise HTTPException(403,"연동 카탈로그를 사용할 권한이 없습니다.")
     return connectors_for_role(x_demo_role)
 

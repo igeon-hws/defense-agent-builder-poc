@@ -15,7 +15,7 @@ def health(): return {"status":"ok",**GATEWAY.status(),"database":str(DB_PATH)}
 
 @router.get("/api/models")
 def models(x_demo_role: str = Header(...)):
-    if x_demo_role not in {"ANALYST","STAFF","ADMIN"}: raise HTTPException(403,"워크플로우 편집 권한이 없습니다.")
+    if x_demo_role not in {"ANALYST","STAFF","COMMANDER","ADMIN"}: raise HTTPException(403,"모델 정보를 확인할 권한이 없습니다.")
     return [{"id":model,"label":model,"default":model==GATEWAY.model} for model in GATEWAY.allowed_models]
 
 @router.post("/api/session")

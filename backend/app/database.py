@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from .core import DB_PATH, GATEWAY, db, now
-from .react_tools import default_react_definition
+from .react_tools import DEFAULT_REACT_AGENT_IDS, DEFAULT_REACT_AGENT_META, default_react_definition
 from .connectors import hydrate_react_definition
 from .workflow_service import graph
 
@@ -58,22 +58,22 @@ def initialize_database():
         react_run_columns={column["name"] for column in c.execute("PRAGMA table_info(react_agent_runs)")}
         if "session_id" not in react_run_columns:
             c.execute("ALTER TABLE react_agent_runs ADD COLUMN session_id TEXT")
-        # 빈 DB에서만 기본 에이전트와 워크플로우를 생성한다.
-        if not c.execute("SELECT 1 FROM react_agents").fetchone():
-            definition=default_react_definition(GATEWAY.model)
-            c.execute("INSERT INTO react_agents VALUES(?,?,?,?,?,?,?,?,?)",
-                      ("react-paju-briefing","파주시 이상징후 조사 에이전트","작전 DB와 승인 보고서, 지역 정보를 조사해 지휘관 브리핑을 작성합니다.",
-                       "ANALYST","analyst.a12","PUBLISHED",1,json.dumps(definition,ensure_ascii=False),now()))
-        admin_react_definition=default_react_definition(GATEWAY.model,"ADMIN")
-        c.execute("INSERT OR IGNORE INTO react_agents VALUES(?,?,?,?,?,?,?,?,?)",
-                  ("react-weekly-movement","주간 외출·외박 현황 보고 에이전트",
-                   "인사행정 DB와 부대 일정, 관련 규정을 조회해 이번 주 외출·외박 현황 보고서를 작성합니다.",
-                   "ADMIN","admin.hr01","PUBLISHED",1,json.dumps(admin_react_definition,ensure_ascii=False),now()))
-        staff_react_definition=default_react_definition(GATEWAY.model,"STAFF")
-        c.execute("INSERT OR IGNORE INTO react_agents VALUES(?,?,?,?,?,?,?,?,?)",
-                  ("react-weekly-threat-comparison","주간 위협 수준 비교 에이전트",
-                   "이번 주와 지난주 접경지역 위협 수준을 관련 관측과 승인 보고서 근거로 비교합니다.",
-                   "STAFF","staff.ops","PUBLISHED",1,json.dumps(staff_react_definition,ensure_ascii=False),now()))
+        # 역할별 시스템 기본 에이전트를 하나씩 유지한다. 기존 seed ID는 채팅 기록 보존을 위해 그대로 사용한다.
+        default_owners = {
+            "ANALYST": "analyst.a12", "STAFF": "staff.ops",
+            "COMMANDER": "commander.demo", "ADMIN": "admin.hr01",
+        }
+        for role, agent_id in DEFAULT_REACT_AGENT_IDS.items():
+            meta = DEFAULT_REACT_AGENT_META[role]
+            definition = default_react_definition(GATEWAY.model, role)
+            timestamp = now()
+            c.execute("INSERT OR IGNORE INTO react_agents VALUES(?,?,?,?,?,?,?,?,?)",
+                      (agent_id, meta["name"], meta["description"], role, default_owners[role],
+                       "PUBLISHED", 1, json.dumps(definition, ensure_ascii=False), timestamp))
+            c.execute("UPDATE react_agents SET name=?,description=?,role=?,owner=?,lifecycle='PUBLISHED',"
+                      "version=CASE WHEN version<1 THEN 1 ELSE version END,definition=?,updated_at=? WHERE id=?",
+                      (meta["name"], meta["description"], role, default_owners[role],
+                       json.dumps(definition, ensure_ascii=False), timestamp, agent_id))
         for saved_agent in c.execute("SELECT id,role,definition FROM react_agents").fetchall():
             saved_definition=json.loads(saved_agent["definition"])
             if "require_approval" in saved_definition:

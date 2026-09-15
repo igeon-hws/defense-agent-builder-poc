@@ -8,15 +8,67 @@ from .connectors import connector_for_capability, connectors_for_role
 
 
 REACT_TOOLS = [
-    {"id": "query_operational_db", "name": "작전 DB 조회", "kind": "database", "roles": ["ANALYST", "STAFF"], "description": "최근 파주시 센서 관측과 이상 징후를 조회합니다."},
-    {"id": "search_reports", "name": "기존 보고서 검색", "kind": "search", "roles": ["ANALYST", "STAFF"], "description": "승인 보고서와 과거 파주시 분석 자료를 검색합니다."},
-    {"id": "lookup_region_info", "name": "지역 정보 조회", "kind": "context", "roles": ["ANALYST", "STAFF"], "description": "파주시 지형·기상·접경지역 맥락을 조회합니다."},
+    {"id": "query_operational_db", "name": "작전 DB 조회", "kind": "database", "roles": ["ANALYST", "STAFF"], "description": "권한 범위의 최근 센서 관측과 이상 징후를 조회합니다."},
+    {"id": "search_reports", "name": "승인 보고서 검색", "kind": "search", "roles": ["ANALYST", "STAFF", "COMMANDER"], "description": "권한 범위의 승인 보고서와 과거 분석 자료를 검색합니다."},
+    {"id": "lookup_region_info", "name": "지역 정보 조회", "kind": "context", "roles": ["ANALYST", "STAFF", "COMMANDER"], "description": "권한 범위의 지형·기상·접경지역 맥락을 조회합니다."},
     {"id": "synthesize_evidence", "name": "근거 종합", "kind": "function", "roles": ["ANALYST", "STAFF"], "description": "수집한 근거를 지휘관 브리핑 초안으로 정리합니다."},
     {"id": "query_personnel_movements", "name": "외출·외박 현황 조회", "kind": "database", "roles": ["ADMIN"], "description": "이번 주 부대원의 외출·외박 신청과 승인 현황을 조회합니다."},
     {"id": "lookup_unit_events", "name": "부대 일정 조회", "kind": "context", "roles": ["ADMIN"], "description": "훈련·당직·행사 등 인원 이동에 영향을 주는 이번 주 부대 일정을 조회합니다."},
     {"id": "search_personnel_rules", "name": "인사 규정 검색", "kind": "search", "roles": ["ADMIN"], "description": "외출·외박 현황 보고에 적용할 인사 행정 기준을 검색합니다."},
     {"id": "generate_weekly_movement_report", "name": "주간 현황 보고 작성", "kind": "function", "roles": ["ADMIN"], "description": "조회된 인사 자료를 인원·유형·상태별로 종합해 주간 보고서를 작성합니다."},
 ]
+
+
+DEFAULT_REACT_AGENT_IDS = {
+    "ANALYST": "react-paju-briefing",
+    "STAFF": "react-weekly-threat-comparison",
+    "COMMANDER": "react-commander-default",
+    "ADMIN": "react-weekly-movement",
+}
+
+
+DEFAULT_REACT_AGENT_META = {
+    "ANALYST": {
+        "name": "분석관 기본 에이전트",
+        "description": "분석관 권한의 작전 관측, 승인 보고서와 지역 정보를 활용해 다양한 조사 목표를 지원합니다.",
+    },
+    "STAFF": {
+        "name": "참모 기본 에이전트",
+        "description": "참모 권한의 접경지역 관측과 승인 보고서를 비교·종합해 상황판단을 지원합니다.",
+    },
+    "COMMANDER": {
+        "name": "지휘관 기본 에이전트",
+        "description": "지휘관 권한으로 승인된 보고서와 지역 상황을 조회해 의사결정용 브리핑을 제공합니다.",
+    },
+    "ADMIN": {
+        "name": "행정병 기본 에이전트",
+        "description": "행정병 권한의 인사행정 데이터, 부대 일정과 규정을 활용해 다양한 행정 질의를 지원합니다.",
+    },
+}
+
+
+SUGGESTED_PROMPTS = {
+    "ANALYST": [
+        "파주시 최근 이상 징후를 조사하고 지휘관 브리핑을 작성해줘.",
+        "최근 센서 관측과 승인 보고서가 서로 일치하는지 확인해줘.",
+        "파주시 상황에서 추가 확인이 필요한 근거를 정리해줘.",
+    ],
+    "STAFF": [
+        "이번 주 위협 수준이 지난주보다 높아졌는지 근거와 함께 설명해줘.",
+        "최신 승인 보고서를 지역별로 비교해 우선 확인 지역을 알려줘.",
+        "접경지역 상황을 참모 종합판단 형식으로 요약해줘.",
+    ],
+    "COMMANDER": [
+        "최신 참모 종합 상황판단의 핵심만 브리핑해줘.",
+        "현재 우선 확인해야 할 지역과 근거를 알려줘.",
+        "최근 승인 보고서의 위협 수준과 출처를 비교해줘.",
+    ],
+    "ADMIN": [
+        "이번 주차 외출·외박 현황 보고를 작성해줘.",
+        "이번 주 부대 일정이 인원 이동에 미치는 영향을 정리해줘.",
+        "승인 대기 중인 외출·외박 현황과 적용 규정을 알려줘.",
+    ],
+}
 
 
 def tools_for_role(role: str) -> list[dict[str, Any]]:
@@ -37,20 +89,23 @@ def default_react_definition(model_id: str, role: str = "ANALYST") -> dict[str, 
     return {
         "schema_version": "1",
         "system_prompt": (
-            "부대 인사행정을 지원하는 행정병 에이전트입니다. 외출·외박 현황과 부대 일정을 확인하고, 개인정보는 필요한 범위로만 사용해 간결한 한국어 주간 현황 보고를 작성하세요."
+            "부대 인사행정을 지원하는 행정병 기본 에이전트입니다. 현재 권한 안에서 인사 현황, 일정과 규정을 확인하고, 개인정보는 필요한 범위로만 사용해 다양한 행정 질의에 간결한 한국어로 답하세요."
             if role == "ADMIN" else
-            "접경지역 정보를 종합하는 정보·작전 참모 에이전트입니다. 현재 관측과 과거 승인 보고서를 비교하고, 위협 수준의 변화와 판단 근거를 간결한 한국어로 설명하세요."
+            "승인된 보고서와 지역 상황을 조회하는 지휘관 기본 에이전트입니다. 현재 권한 안의 승인 정보만 사용하고, 출처와 불확실성을 구분해 의사결정에 필요한 핵심을 간결한 한국어로 답하세요."
+            if role == "COMMANDER" else
+            "접경지역 정보를 종합하는 정보·작전 참모 기본 에이전트입니다. 현재 권한 안에서 관측과 승인 보고서를 비교하고, 위협 수준의 변화와 판단 근거를 간결한 한국어로 설명하세요."
             if role == "STAFF" else
-            "파주시 작전 정보를 조사하는 국방 분석 에이전트입니다. 근거를 먼저 수집하고 간결한 한국어 지휘관 브리핑을 작성하세요."
+            "파주시 작전 정보를 조사하는 분석관 기본 에이전트입니다. 현재 권한 안에서 필요한 근거를 먼저 수집하고 다양한 분석 요청에 간결한 한국어로 답하세요."
         ),
         "model": {"provider": "openai", "model_id": model_id},
         "max_iterations": 6,
         "connectors": [connector["id"] for connector in connectors_for_role(role)],
         "tools": [tool["id"] for tool in tools],
+        "suggested_prompts": SUGGESTED_PROMPTS[role],
     }
 
 
-def execute_react_tool(db: Callable, tool_name: str, observations: list[dict[str, Any]], goal: str = "") -> dict[str, Any]:
+def execute_react_tool(db: Callable, tool_name: str, observations: list[dict[str, Any]], goal: str = "", role: str = "ANALYST") -> dict[str, Any]:
     if tool_name == "query_operational_db":
         with db() as connection:
             records = [dict(item) for item in connection.execute(
@@ -64,10 +119,11 @@ def execute_react_tool(db: Callable, tool_name: str, observations: list[dict[str
         return {"source": "모의 작전 DB", "records": records, "summary": f"파주시 최근 센서 관측 {len(records)}건을 확인했습니다."}
     if tool_name == "search_reports":
         with db() as connection:
+            where = "kind='COMMANDER'" if role == "COMMANDER" else "kind='REGIONAL'" if role == "STAFF" else "area='경기도 파주시'"
             records = [dict(item) for item in connection.execute(
                 "SELECT id,title,area,threat,content,approved_at FROM reports "
-                "WHERE area='경기도 파주시' ORDER BY approved_at DESC LIMIT 4")]
-        if not records:
+                f"WHERE {where} ORDER BY approved_at DESC LIMIT 6")]
+        if not records and role != "COMMANDER":
             records = [{"id": "RPT-PJU-HIST-01", "title": "파주시 북부 감시 동향", "area": "경기도 파주시",
                         "threat": "MEDIUM", "content": "최근 7일간 야간 이동 징후가 간헐적으로 증가했습니다.", "approved_at": "데모 과거자료"}]
         return {"source": "승인 보고서 저장소", "records": records,
@@ -75,7 +131,8 @@ def execute_react_tool(db: Callable, tool_name: str, observations: list[dict[str
                                     "average_confidence": 0.76, "evidence_id": "RPT-BORDER-W35"},
                 "summary": f"관련 승인·과거 보고서 {len(records)}건과 지난주 비교 기준을 찾았습니다."}
     if tool_name == "lookup_region_info":
-        return {"source": "모의 지역정보 시스템", "area": "경기도 파주시", "terrain": "임진강과 접경 산악·평야가 혼재",
+        area = "경기도 파주시" if role == "ANALYST" else "접경지역 전체"
+        return {"source": "모의 지역정보 시스템", "area": area, "terrain": "임진강과 접경 산악·평야가 혼재",
                 "weather": "야간 저시정, 북동풍", "operational_note": "민간 접근로와 감시 취약 구간을 함께 고려해야 합니다.",
                 "summary": "파주시 접경 지형과 현재 작전 맥락을 확인했습니다."}
     if tool_name == "synthesize_evidence":

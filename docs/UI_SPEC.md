@@ -12,8 +12,8 @@ Desktop-first internal platform, optimized for a 1440×900 presentation display 
 | Dashboard | /dashboard | 분석관·참모 요약; 지휘관에게는 상황판 단일 메뉴로 표시 |
 | Workflow Builder | /builder and /agents/:id/builder (new draft via Dashboard/Registry) | Analyst/Staff own role workflows |
 | Workflow Registry | /agents | Analyst/Staff role-filtered workflows |
-| ReAct Agent Builder | /react-agent-builder and /react-agents/:id/builder | Analyst/Staff owned agents |
-| Agent Registry / Chat | /react-agents and /react-agents/:id/chat | Analyst/Staff owned agents and runs |
+| ReAct Agent Builder | /react-agent-builder and /react-agents/:id/builder | Analyst/Staff/Admin custom agents; system defaults are read-only |
+| Agent Registry / Chat | /react-agents and /react-agents/:id/chat | All roles; one role-scoped system default agent plus owned custom agents |
 | Execution | /executions and /executions/:id | Role/area-filtered executions |
 | Situation Board | /situation | 분석관·참모; 지휘관 접근은 /dashboard 상황판으로 이동 |
 | 센서 입력 | /sensor | Analyst; 좌측 기본 메뉴의 가장 아래 |
@@ -104,7 +104,7 @@ Publishing shows a concise validation summary and creates an immutable numbered 
 
 워크플로우 빌더의 노드 팔레트는 노드 수를 늘리지 않고 노드명 아래에 연결 데이터·외부 시스템과 `MOCK` 상태를 표시한다. 캔버스에서 노드를 선택하면 우측 설정 상단에서 같은 연동 정보를 확인한 뒤 Input/Output과 노드별 설정을 편집한다.
 
-에이전트 레지스트리는 이름, 역할, 연결 도구 수, 반복 제한, 상태와 버전을 보여주고 빌더 또는 실행 화면으로 이동한다. 채팅 화면 왼쪽에는 사용자별 세션 목록, 새 대화와 삭제 기능을 제공하며 최근 3턴이 컨텍스트로 사용됨을 표시한다. 세션을 선택하면 저장된 사용자 요청과 답변을 복원한다. 실행 전에는 입력 중인 프롬프트를 대화 기록에 표시하지 않는다. 실행을 누른 시점의 요청과 스트리밍 브리핑을 중앙에 표시하고, 오른쪽에는 공개 가능한 판단 요약과 도구 관찰을 시간순으로 표시한다. 내부 chain-of-thought라는 표현을 사용하지 않으며 실행 중 입력 중복 제출과 세션 전환을 막는다.
+에이전트 레지스트리는 이름, 역할, 연결 도구 수, 반복 제한, 상태와 버전을 보여주고 빌더 또는 실행 화면으로 이동한다. 역할별 시스템 기본 에이전트를 목록 최상단에 `SYSTEM DEFAULT`로 표시하며 현재 권한의 연동이 자동 연결됨을 설명한다. 기본 에이전트는 삭제·편집할 수 없고, 지휘관은 기본 에이전트 실행만 사용한다. 채팅 빈 화면에는 역할별 대표 유스케이스를 추천 질문으로 표시하며 선택 시 입력창에 채운다. 채팅 화면 왼쪽에는 사용자별 세션 목록, 새 대화와 삭제 기능을 제공하며 최근 3턴이 컨텍스트로 사용됨을 표시한다. 세션을 선택하면 저장된 사용자 요청과 답변을 복원한다. 실행 전에는 입력 중인 프롬프트를 대화 기록에 표시하지 않는다. 실행을 누른 시점의 요청과 스트리밍 브리핑을 중앙에 표시하고, 오른쪽에는 공개 가능한 판단 요약과 도구 관찰을 시간순으로 표시한다. 내부 chain-of-thought라는 표현을 사용하지 않으며 실행 중 입력 중복 제출과 세션 전환을 막는다.
 
 기본 채팅 입력은 역할별로 다르다. 분석관은 파주시 이상 징후 조사, 정보·작전 참모는 “이번 주 위협 수준이 지난주보다 높아졌는지 근거와 함께 설명해줘.”, 행정병은 이번 주차 외출·외박 현황 보고 요청으로 시작한다.
 
