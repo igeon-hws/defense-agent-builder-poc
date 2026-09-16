@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from .core import DB_PATH, GATEWAY, db, now
-from .react_tools import DEFAULT_REACT_AGENT_IDS, DEFAULT_REACT_AGENT_META, default_react_definition
+from .react_tools import DEFAULT_REACT_AGENT_SPECS, default_react_definition
 from .connectors import hydrate_react_definition
 from .workflow_service import graph
 
@@ -58,14 +58,14 @@ def initialize_database():
         react_run_columns={column["name"] for column in c.execute("PRAGMA table_info(react_agent_runs)")}
         if "session_id" not in react_run_columns:
             c.execute("ALTER TABLE react_agent_runs ADD COLUMN session_id TEXT")
-        # 역할별 시스템 기본 에이전트를 하나씩 유지한다. 기존 seed ID는 채팅 기록 보존을 위해 그대로 사용한다.
+        # 역할별 범용·목적형 시스템 기본 에이전트를 유지한다. 기존 seed ID는 채팅 기록 보존을 위해 그대로 사용한다.
         default_owners = {
             "ANALYST": "analyst.a12", "STAFF": "staff.ops",
             "COMMANDER": "commander.demo", "ADMIN": "admin.hr01",
         }
-        for role, agent_id in DEFAULT_REACT_AGENT_IDS.items():
-            meta = DEFAULT_REACT_AGENT_META[role]
-            definition = default_react_definition(GATEWAY.model, role)
+        for agent_id, meta in DEFAULT_REACT_AGENT_SPECS.items():
+            role = meta["role"]
+            definition = default_react_definition(GATEWAY.model, role, agent_id)
             timestamp = now()
             c.execute("INSERT OR IGNORE INTO react_agents VALUES(?,?,?,?,?,?,?,?,?)",
                       (agent_id, meta["name"], meta["description"], role, default_owners[role],

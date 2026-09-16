@@ -13,9 +13,7 @@ React Flow로 역할별 워크플로우를 구성하고, ReAct 에이전트에 �
 
 ~~~dotenv
 OPENAI_API_KEY=발급받은_API_키
-OPENAI_MODEL=gpt-4.1-mini
-OPENAI_ALLOWED_MODELS=gpt-4.1-mini,gpt-5-mini
-~~~
+OPENAI_MODEL=gpt-5.4-mini
 
 기본 실행 모드는 실제 OpenAI Responses API 호출입니다. 키 없이 화면 흐름만 확인할 때는 DEMO_MODEL_MODE=deterministic을 추가합니다.
 

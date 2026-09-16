@@ -10,7 +10,7 @@ These documents translate the retrieved planning pages and the user's explicit s
 
 Build a **1-week seminar demo** for a roughly 40-minute presentation, with about 11 minutes for the live demo. Show that users can compose role-specific workflows in one shared Workflow Builder, run them, review AI output, and connect workflows through approved reports.
 
-The visual focus is the Workflow Builder and the separate ReAct Agent experience, not the Situation Board. Editable builders remain role-scoped; every role receives one system default agent in its registry. Workflows execute declared edges; agents select among role-authorized tools to achieve a user goal.
+The visual focus is the Workflow Builder and the separate ReAct Agent experience, not the Situation Board. Editable builders remain role-scoped; every role receives a general and a mission-specific system default agent in its registry. Workflows execute declared edges; agents select among role-authorized tools to achieve a user goal.
 
 Required stack: React + TypeScript + React Flow frontend; FastAPI + LangGraph + SQLite backend/runtime. Actual demo reasoning uses an external LLM through a Model Gateway/provider abstraction. Future local models require a provider implementation, not a workflow redesign; local serving is out of scope.
 
@@ -46,11 +46,11 @@ Workflow Registry는 현재 세션의 사용자 ID를 기준으로 소유 워크
 
 ## ReAct 에이전트 첫 구현
 
-워크플로우와 별도로 에이전트 빌더와 에이전트 레지스트리를 제공한다. 분석관·참모·지휘관·행정병에게 시스템 기본 에이전트를 하나씩 제공하고 현재 역할에 허용된 연동 전체를 실행 시점에 자동 적용한다. 기본 에이전트는 삭제·편집할 수 없으며 기존 대표 유스케이스는 채팅의 추천 질문으로 제공한다. 사용자가 만드는 커스텀 에이전트는 역할별 **연동 카탈로그**에서 데이터와 외부 시스템을 선택하고, 선택한 연동이 제공하는 기능 도구만 허용한다. 카탈로그에는 연동 이름, 설명, `DATA`/`SYSTEM`, `MOCK`/`LIVE`, `READ`/`SEARCH`/`WRITE`와 승인 필요 여부를 표시한다.
+워크플로우와 별도로 에이전트 빌더와 에이전트 레지스트리를 제공한다. 분석관·참모·지휘관·행정병에게 범용형과 임무 특화형 시스템 기본 에이전트를 각각 제공한다. 범용형은 현재 역할에 허용된 연동 전체를, 임무 특화형은 목적에 필요한 연동만 적용한다. 기본 에이전트는 삭제·편집할 수 없으며 에이전트별 대표 유스케이스는 채팅의 추천 질문으로 제공한다. 사용자가 만드는 커스텀 에이전트는 역할별 **연동 카탈로그**에서 데이터와 외부 시스템을 선택하고, 선택한 연동이 제공하는 기능 도구만 허용한다. 카탈로그에는 연동 이름, 설명, `DATA`/`SYSTEM`, `MOCK`/`LIVE`, `READ`/`SEARCH`/`WRITE`와 승인 필요 여부를 표시한다.
 
 분석관 기본 에이전트의 추천 질문에는 “파주시 최근 이상 징후를 조사하고 지휘관 브리핑을 작성해줘”를 포함한다. ReAct 런타임은 모델에게 매 반복의 다음 행동을 선택하게 하고, 선택된 작전 DB 조회·기존 보고서 검색·지역 정보 조회·근거 종합 결과를 다시 관찰로 제공한다. 연결된 도구 전체나 고정 순서를 강제하지 않으며, 현재 요청과 대화 컨텍스트만으로 답할 수 있으면 도구 호출 없이 완료할 수 있다. 런타임은 허용 목록, 중복 호출과 종합 도구의 최소 입력 계약만 검증한다. 화면은 비공개 chain-of-thought가 아니라 공개 가능한 판단 요약, 선택한 도구, 관찰 결과와 최종 응답 청크를 스트리밍하고 분석 완료 상태로 종료한다. 에이전트 HITL은 후속 범위다.
 
-정보·작전 참모 기본 에이전트에는 “이번 주 위협 수준이 지난주보다 높아졌는지 근거와 함께 설명해줘.”를 추천 질문으로 제공한다. 현재 작전 관측과 지난주 승인 보고 기준을 조회하고, 주간 위협 변화와 근거 식별자를 포함한 비교 결과를 생성한다. 지휘관 기본 에이전트는 승인 보고서와 지역 상황의 읽기 권한만 사용하며, 행정병 기본 에이전트에는 주간 외출·외박 현황 보고 요청을 추천 질문으로 제공한다.
+정보·작전 참모 범용 에이전트에는 “이번 주 위협 수준이 지난주보다 높아졌는지 근거와 함께 설명해줘.”를 추천 질문으로 제공한다. 임무 특화 기본 에이전트는 분석관의 다중 징후 상관분석, 참모의 대응 우선순위 산정, 지휘관의 읽기 전용 대응방안 비교, 행정병의 근무편성 충돌 점검과 원본을 변경하지 않는 조정 초안을 지원한다.
 
 에이전트 채팅은 사용자별·에이전트별 세션으로 저장한다. 같은 세션의 후속 요청에는 최근 완료 대화 3턴만 모델 컨텍스트로 전달하고, 새 대화에서는 이전 컨텍스트를 사용하지 않는다. 사용자는 세션을 선택해 대화를 복원하거나 새로 만들고 삭제할 수 있다.
 

@@ -11,7 +11,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .gateway import ModelGateway, ModelGatewayError
-from .react_tools import DEFAULT_REACT_AGENT_IDS, default_react_definition, execute_react_tool, tools_for_role
+from .react_tools import (DEFAULT_REACT_AGENT_IDS, DEFAULT_REACT_AGENT_SPECS, PURPOSE_REACT_AGENT_IDS,
+                          SYSTEM_DEFAULT_REACT_AGENT_IDS, default_react_definition,
+                          execute_react_tool, tools_for_role)
 from .connectors import hydrate_react_definition
 
 
@@ -41,10 +43,11 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
 
     def hydrate_agent(agent: dict[str, Any] | None) -> dict[str, Any] | None:
         if agent:
-            agent["system_default"] = agent["id"] == DEFAULT_REACT_AGENT_IDS.get(agent["role"])
+            agent["system_default"] = agent["id"] in SYSTEM_DEFAULT_REACT_AGENT_IDS
             if agent["system_default"]:
                 saved_model = agent["definition"].get("model", {}).get("model_id", gateway.model)
-                agent["definition"] = default_react_definition(saved_model, agent["role"])
+                agent["definition"] = default_react_definition(saved_model, agent["role"], agent["id"])
+                agent["default_kind"] = DEFAULT_REACT_AGENT_SPECS[agent["id"]]["kind"]
             else:
                 agent["definition"] = hydrate_react_definition(agent["definition"], agent["role"])
         return agent
@@ -126,6 +129,18 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
                     observations.append({"tool": "runtime_validation", "result": validation})
                     yield json.dumps(save_event(run_id, "tool_result", "입력 조건 확인", validation["error"], action, validation), ensure_ascii=False) + "\n"
                     continue
+                required_inputs = {
+                    "correlate_threat_indicators": {"query_operational_db", "search_indicator_library"},
+                    "prioritize_response_options": {"search_reports", "query_unit_readiness"},
+                    "inspect_duty_roster": {"query_personnel_movements", "lookup_unit_events"},
+                    "draft_roster_adjustment": {"inspect_duty_roster"},
+                }
+                if action in required_inputs and not required_inputs[action].issubset(completed):
+                    missing = required_inputs[action] - completed
+                    validation = {"error": f"이 도구를 실행하기 전에 필요한 조회를 완료해야 합니다: {', '.join(sorted(missing))}"}
+                    observations.append({"tool": "runtime_validation", "result": validation})
+                    yield json.dumps(save_event(run_id, "tool_result", "입력 조건 확인", validation["error"], action, validation), ensure_ascii=False) + "\n"
+                    continue
                 result = execute_react_tool(db, action, observations, prompt, agent["role"])
                 observations.append({"tool": action, "result": result})
                 meta = next(tool for tool in role_tools if tool["id"] == action)
@@ -147,12 +162,11 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
     def agents(role: str, x_demo_role: str = Header(...)):
         if role != x_demo_role or role not in {"ANALYST", "STAFF", "COMMANDER", "ADMIN"}:
             raise HTTPException(403, "에이전트 레지스트리에 접근할 권한이 없습니다.")
-        default_id = DEFAULT_REACT_AGENT_IDS[role]
         with db() as connection:
             return [hydrate_agent(deserialize(item)) for item in connection.execute(
                 "SELECT * FROM react_agents WHERE role=? AND owner=? "
-                "ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END,updated_at DESC",
-                (role, session_for(role)["user_id"], default_id))]
+                "ORDER BY CASE WHEN id=? THEN 0 WHEN id=? THEN 1 ELSE 2 END,updated_at DESC",
+                (role, session_for(role)["user_id"], DEFAULT_REACT_AGENT_IDS[role], PURPOSE_REACT_AGENT_IDS[role]))]
 
     @router.post("/react-agents")
     def create_agent(body: ReactAgentCreateIn, x_demo_role: str = Header(...)):
@@ -175,7 +189,7 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
 
     @router.put("/react-agents/{agent_id}")
     def save_agent(agent_id: str, body: ReactAgentIn, x_demo_role: str = Header(...)):
-        if agent_id in DEFAULT_REACT_AGENT_IDS.values():
+        if agent_id in SYSTEM_DEFAULT_REACT_AGENT_IDS:
             raise HTTPException(409, "시스템 기본 에이전트는 편집할 수 없습니다. 복제한 사용자 에이전트를 편집하세요.")
         with db() as connection:
             agent = hydrate_agent(deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone()))
@@ -191,7 +205,7 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
 
     @router.post("/react-agents/{agent_id}/publish")
     def publish_agent(agent_id: str, x_demo_role: str = Header(...)):
-        if agent_id in DEFAULT_REACT_AGENT_IDS.values():
+        if agent_id in SYSTEM_DEFAULT_REACT_AGENT_IDS:
             raise HTTPException(409, "시스템 기본 에이전트는 이미 게시되어 있습니다.")
         with db() as connection:
             agent = hydrate_agent(deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone()))
@@ -202,7 +216,7 @@ def create_react_router(*, db: Callable, deserialize: Callable, session_for: Cal
 
     @router.delete("/react-agents/{agent_id}")
     def delete_agent(agent_id: str, x_demo_role: str = Header(...)):
-        if agent_id in DEFAULT_REACT_AGENT_IDS.values():
+        if agent_id in SYSTEM_DEFAULT_REACT_AGENT_IDS:
             raise HTTPException(409, "기본 제공 에이전트는 삭제할 수 없습니다.")
         with db() as connection:
             agent = hydrate_agent(deserialize(connection.execute("SELECT * FROM react_agents WHERE id=?", (agent_id,)).fetchone()))

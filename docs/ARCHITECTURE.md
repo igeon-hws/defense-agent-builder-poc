@@ -20,7 +20,7 @@ Use one backend process and SQLite. Separate modules and interfaces, not deploya
 
 ReAct 에이전트는 워크플로우 정의와 분리된 `react_agents` 정의를 사용한다. 정의에는 모델, 시스템 프롬프트, 최대 반복 횟수, 선택한 connector ID와 파생된 허용 도구 ID를 저장한다. `connectors.py`가 역할별 데이터·외부 시스템, mock 여부, capability와 접근 유형을 정의한다. 저장과 실행 시 서버가 connector 선택으로 허용 도구를 다시 계산하므로 클라이언트가 임의 도구 ID를 추가할 수 없다. connector 필드가 없는 기존 정의는 저장된 도구 ID로 자동 보완한다. `react_chat_sessions`가 사용자별 대화 경계를 저장하고 `react_agent_runs`와 `react_agent_events`가 요청, 단계별 공개 이벤트와 최종 결과를 저장한다. 실행 API는 NDJSON으로 요청 접수, 판단 요약, 도구 관찰, 응답 청크와 완료 이벤트를 순서대로 스트리밍한다. 같은 세션의 최근 완료 3턴을 `conversation_context`로 모델에 전달하며 세션 간에는 컨텍스트를 공유하지 않는다. 에이전트 실행의 HITL은 첫 구현에서 제외한다.
 
-각 역할에는 하나의 시스템 기본 에이전트가 있다. 기본 에이전트는 저장된 connector 선택에 의존하지 않고 요청 시점의 역할 정책에서 허용 연동 전체를 다시 계산하며 삭제·편집할 수 없다. 분석관·참모·행정병의 기존 대표 유스케이스와 지휘관 브리핑 질의는 `suggested_prompts`로 제공한다. 사용자가 만든 커스텀 에이전트만 connector 선택과 모델·프롬프트 편집을 허용한다.
+각 역할에는 범용형과 임무 특화형, 두 개의 시스템 기본 에이전트가 있다. 범용형은 요청 시점의 역할 정책에서 허용 연동 전체를 다시 계산하고, 임무 특화형은 역할 권한 안에서 목적에 필요한 connector만 고정 구성한다. 두 유형 모두 삭제·편집할 수 없고 각 목적에 맞는 `suggested_prompts`를 제공한다. 사용자가 만든 커스텀 에이전트만 connector 선택과 모델·프롬프트 편집을 허용한다.
 
 모델은 매 반복에서 다음 도구 또는 FINAL을 구조화 출력으로 선택한다. 런타임은 연결된 모든 도구의 실행이나 순서를 강제하지 않고 모델의 선택을 그대로 실행한다. 현재 요청과 최근 대화만으로 답할 수 있으면 첫 반복에도 FINAL이 가능하다. 런타임은 허용 목록, 5~8회 반복 제한, 동일 도구 중복 호출 방지와 근거 종합의 최소 입력 계약만 검증한다. 기본 도구는 작전 DB 조회, 승인 보고서 검색, 지역 정보 조회와 근거 종합이며 현재 모두 로컬 SQLite 또는 mock 어댑터다. 실제 MCP transport는 아직 연결하지 않으며 이후 같은 도구 인터페이스에 어댑터로 추가한다.
 
@@ -118,4 +118,4 @@ Backend applies the same small role/area policy to reads, node validation and ap
 
 `정기 휴가 신청 접수 → 잔여 휴가 조회 → 부대 일정 조회 → 휴가 신청 요약 생성 → 행정병 HITL → 부대 인트라넷 등록`을 세 번째 LangGraph 템플릿으로 제공한다. 승인 전에는 인트라넷 등록 행을 만들지 않는다. 승인 후 `leave_requests.status=REGISTERED`와 `intranet_registrations`를 함께 저장하며, 현재 인트라넷은 명시적인 mock 시스템이다.
 
-행정병 기본 에이전트에는 `query_personnel_movements`, `lookup_unit_events`, `search_personnel_rules`, `generate_weekly_movement_report`만 노출한다. 지휘관 기본 에이전트에는 승인 보고서 검색과 지역 상황 조회만 노출한다. 분석관·참모용 작전 도구, 지휘관 읽기 도구와 행정용 인사 도구는 역할별 카탈로그에서 분리한다.
+범용 기본 에이전트에는 역할이 허용하는 전체 도구를 노출한다. 임무 특화형은 분석관의 징후 상관분석, 참모의 대응 우선순위, 지휘관의 지휘결심 검토, 행정병의 근무편성 점검에 필요한 도구만 노출한다. 지휘관 도구는 승인 정보·대응태세 조회와 방안 비교만 허용하고 외부 상태를 변경하지 않는다. 역할별 카탈로그와 서버 실행 시점의 허용 목록 검사를 함께 적용한다.

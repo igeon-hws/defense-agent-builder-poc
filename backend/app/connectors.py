@@ -18,6 +18,18 @@ CONNECTORS: list[dict[str, Any]] = [
     {"id": "briefing_system", "name": "지휘 보고 체계", "category": "EXTERNAL_SYSTEM", "mode": "MOCK",
      "roles": ["ANALYST", "STAFF"], "description": "수집 근거를 종합해 지휘관 브리핑을 생성하는 모의 체계",
      "capabilities": [{"id": "synthesize_evidence", "name": "근거 종합·브리핑 생성", "access": "WRITE"}]},
+    {"id": "indicator_library", "name": "징후 패턴 라이브러리", "category": "DATA", "mode": "MOCK",
+     "roles": ["ANALYST"], "description": "과거 침투·정찰 징후와 오경보 판별 기준",
+     "capabilities": [
+         {"id": "search_indicator_library", "name": "징후 패턴 검색", "access": "SEARCH"},
+         {"id": "correlate_threat_indicators", "name": "다중 징후 상관분석", "access": "READ"},
+     ]},
+    {"id": "readiness_data", "name": "대응태세 데이터", "category": "DATA", "mode": "MOCK",
+     "roles": ["STAFF", "COMMANDER"], "description": "지역별 가용 감시자산과 대응부대 준비상태",
+     "capabilities": [{"id": "query_unit_readiness", "name": "대응태세 조회", "access": "READ"}]},
+    {"id": "decision_support", "name": "지휘결심 지원체계", "category": "EXTERNAL_SYSTEM", "mode": "MOCK",
+     "roles": ["STAFF", "COMMANDER"], "description": "승인 보고서와 대응태세를 바탕으로 대응 우선순위를 비교",
+     "capabilities": [{"id": "prioritize_response_options", "name": "대응방안 비교", "access": "READ"}]},
     {"id": "personnel_data", "name": "인사행정 데이터", "category": "DATA", "mode": "MOCK",
      "roles": ["ADMIN"], "description": "부대원 외출·외박 신청과 승인 현황",
      "capabilities": [{"id": "query_personnel_movements", "name": "외출·외박 현황 조회", "access": "READ"}]},
@@ -33,6 +45,12 @@ CONNECTORS: list[dict[str, Any]] = [
          {"id": "generate_weekly_movement_report", "name": "주간 현황 보고 작성", "access": "WRITE"},
          {"id": "intranet_register", "name": "휴가 신청 등록", "access": "WRITE", "hitl_required": True,
           "workflow_only": True},
+     ]},
+    {"id": "duty_roster", "name": "근무편성 관리체계", "category": "EXTERNAL_SYSTEM", "mode": "MOCK",
+     "roles": ["ADMIN"], "description": "당직·훈련·외출외박 일정 충돌 점검과 조정안 작성",
+     "capabilities": [
+         {"id": "inspect_duty_roster", "name": "근무편성 충돌 점검", "access": "READ"},
+         {"id": "draft_roster_adjustment", "name": "근무 조정안 작성", "access": "WRITE"},
      ]},
 ]
 
