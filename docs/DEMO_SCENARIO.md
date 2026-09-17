@@ -1,21 +1,58 @@
-# Workflow Builder Demo — Scenario and Acceptance
+# 데모 시나리오와 검증 기준
 
-## 센서 입력 및 실제 LLM 확인
+이 문서는 현재 구현된 기능을 발표 전에 확인하기 위한 실행 절차다. 제품 범위는 [제품 요구사항](PRD.md), 내부 구조는 [아키텍처](ARCHITECTURE.md), 화면 세부사항은 [UI 명세](UI_SPEC.md), 알려진 제한은 [현재 구현 상태](IMPLEMENTATION_STATUS.md)를 참고한다.
 
-1. 최초 역할 선택 화면에서 분석관으로 로그인하고 대시보드 헤더의 `센서 입력` 보조 버튼을 연다.
-2. 탐지 개체 수와 신뢰도를 조절하고 이벤트를 전송한다.
-3. 실행 상세에서 입력값과 외부 LLM의 구조화 위협 분석 결과를 확인한다.
-4. API 키 누락 또는 공급자 오류 시 승인 초안을 만들지 않고 실행이 `FAILED`가 되는지 확인한다.
+## 준비
 
-Read [PRD.md](PRD.md), [ARCHITECTURE.md](ARCHITECTURE.md) and [UI_SPEC.md](UI_SPEC.md) before implementing or rehearsing. This is the executable demonstration contract, not a claim that the repository is already implemented.
+1. 프로젝트 루트 `.env`에 모델 설정을 준비한다.
+2. 백엔드와 프론트엔드를 실행한다.
+3. `GET /api/health`에서 상태, 모델 모드와 설정 여부를 확인한다.
+4. 실제 모델 데모라면 `mode`가 `openai`, `configured`가 `true`인지 확인한다.
+5. 외부 호출 없이 화면만 점검하려면 `DEMO_MODEL_MODE=deterministic`을 사용한다.
+6. 연천군 `MEDIUM`, 철원군 `LOW` 지역 보고서 초기 데이터가 있는지 확인한다.
+7. 분석관·참모·행정병 기본 워크플로우가 `PUBLISHED`인지 확인한다.
 
-## Preparation
+결정론적 모드는 리허설용이며 실제 외부 모델 호출 시연을 대신하지 않는다.
 
-- Run React frontend and FastAPI/LangGraph backend with SQLite persistence and configured external LLM credentials. Check provider connectivity before presenting. Record the provider/model used without exposing secrets.
-- Seed a 경기도 파주시 Analyst, Staff and Commander mock identities; Analyst and Staff editable templates; mock Situation Context/Data Fabric evidence; preapproved 경기도 연천군 MEDIUM and 강원특별자치도 철원군 LOW regional reports marked as demo fixtures.
-- 연천군/철원군 seeding must not trigger Staff runs. Their preapproved status represents external historical input; it does not bypass approval for the newly generated 파주시 report.
-- Publish one Staff Workflow subscription before the Analyst report is approved. Ensure one active Analyst 경기도 파주시 subscription. Use an isolated demo dataset with no previous pending runs; any reset must be explicit and limited to demo data.
-- Main sensor fixture below targets MEDIUM/HIGH; do not force an external model result into HIGH. Rehearse with suitable evidence/prompt. If the actual model returns LOW, display that branch honestly and choose a separately labeled test fixture to demonstrate approval. Deterministic test mode cannot satisfy the live external-provider criterion.
+## 실행 명령
+
+백엔드:
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload
+```
+
+프론트엔드:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+브라우저에서 `http://localhost:5173`을 연다.
+
+## 핵심 시연 흐름
+
+| 시간 | 발표자 작업 | 확인할 결과 |
+| --- | --- | --- |
+| 0:00~1:00 | 파주지역 분석관으로 로그인 | 역할·지역이 표시되고 분석관 대시보드가 열린다. |
+| 1:00~2:30 | 기본 분석관 워크플로우 빌더 열기 | 여섯 노드, 연결 시스템, 모델과 프롬프트를 확인한다. |
+| 2:30~3:30 | 필터 기준 또는 프롬프트 수정 후 저장·검증·게시 | `DRAFT`에서 새 `PUBLISHED` 버전으로 바뀐다. |
+| 3:30~4:30 | 대시보드 헤더의 `센서 입력`에서 이벤트 전송 | 실행 ID가 생기고 실행 상세로 이동할 수 있다. |
+| 4:30~6:00 | 분석관 승인 패널에서 초안 확인·수정 승인 | 같은 실행이 재개되고 수정 내용으로 지역 보고서를 만든다. |
+| 6:00~7:00 | 연결된 참모 실행 열기 | 파주시 승인 보고로 참모 실행이 한 건 시작된다. |
+| 7:00~8:30 | 참모 역할로 바꾸고 참모 실행 검토 | 승인 지역보고 수집, 상황 조회, 종합 초안과 승인 대기를 확인한다. |
+| 8:30~9:30 | 참모 보고서 승인 | 지휘관 보고서와 지휘관 알림이 한 건 생성된다. |
+| 9:30~11:00 | 지휘관 역할로 전환 | COP 지도, 지도 아래 기본 챗봇, 참모 종합 판단과 보고서 알림이 한 화면에 보인다. |
+
+지휘관 단계에서 원시 센서 이벤트는 표시되지 않아야 한다. 보고서 도착 알림을 누르면 읽음 상태가 바뀌고 승인자·시각·원본 실행을 포함한 보고서 상세가 열린다.
+
+## 분석관 센서 입력 예시
 
 ```json
 {
@@ -27,76 +64,141 @@ Read [PRD.md](PRD.md), [ARCHITECTURE.md](ARCHITECTURE.md) and [UI_SPEC.md](UI_SP
 }
 ```
 
-The backend adds a unique event ID and timestamp. Mock evidence includes three referenced historical observations. Use fictional demonstration data throughout.
+백엔드는 이벤트 ID와 생성 시각을 추가한다. 실제 모델이 반드시 `HIGH`를 반환한다고 가정하지 않는다. 모델 결과가 `LOW` 또는 `MEDIUM`이면 그대로 설명한다.
 
-## Main flow (about 11 minutes)
+## 워크플로우 생성 시연
 
-| Time | Presenter action | Required visible/system result |
+핵심 흐름 전에 다음 절차를 짧게 보여줄 수 있다.
+
+1. 워크플로우 레지스트리에서 `새 워크플로우`를 누른다.
+2. 이름과 설명을 입력하고 빈 캔버스 또는 현재 역할 기본 템플릿을 선택한다.
+3. 빈 캔버스라면 역할별 노드를 추가하고 연결한다.
+4. 저장 후 검증한다.
+5. 검증이 성공하면 게시한다.
+6. 시험 실행을 시작하고 실행 상세의 고정 스냅샷을 확인한다.
+
+역할과 지역은 생성 창에서 고르는 값이 아니라 현재 세션에 따라 자동으로 정해진다.
+
+## 지휘관 챗봇 시연
+
+1. 지휘관 상황판의 지도 아래에서 기본 에이전트 영역을 찾는다.
+2. 추천 질문 `최신 참모 종합 상황판단의 핵심만 브리핑해줘.`를 선택한다.
+3. 실행하면 중앙에 사용자 요청과 스트리밍 답변이 나타나는지 확인한다.
+4. 오른쪽에 판단 요약과 선택된 도구 관찰이 나타나는지 확인한다.
+5. 새 대화를 만들고 왼쪽 세션 목록에 `YYYY.MM.DD 시작`과 턴 수만 표시되는지 확인한다.
+6. 좌측 메뉴의 `기본 에이전트`에서 범용형과 지휘결심 검토 에이전트를 모두 실행할 수 있는지 확인한다.
+
+상황판 아래에 카드형 에이전트 레지스트리가 다시 나타나면 실패다.
+
+## ReAct 에이전트 시연
+
+### 분석관 범용형
+
+추천 질문:
+
+> 파주시 최근 이상 징후를 조사하고 지휘관 브리핑을 작성해줘.
+
+작전 DB, 승인 보고서, 지역 정보와 근거 종합 중 모델이 필요한 도구를 선택하는지 확인한다. 모든 도구가 무조건 실행될 필요는 없다.
+
+### 참모 범용형
+
+추천 질문:
+
+> 이번 주 위협 수준이 지난주보다 높아졌는지 근거와 함께 설명해줘.
+
+이번 주 관측과 지난주 기준, 근거 식별자가 결과에 포함되는지 확인한다.
+
+### 임무 특화형
+
+- 분석관: 센서·보고서·과거 징후 패턴 상관분석
+- 참모: 승인 보고와 가용태세 기반 대응 우선순위
+- 지휘관: 대응방안별 효과와 제약 비교
+- 행정병: 외출·외박과 근무편성 충돌 점검·조정 초안
+
+### 세션 컨텍스트
+
+첫 답변 뒤 `방금 결과를 짧게 요약해줘.`라고 요청한다. 같은 세션에서는 최근 대화를 참조하고, 새 세션에서는 이전 답변을 참조하지 않는지 확인한다. 세션을 다시 선택하면 질문과 최종 답변이 복원되어야 한다. 과거 도구 타임라인은 현재 UI에서 복원되지 않는 것이 정상이다.
+
+## 행정병 시연
+
+1. 행정병으로 로그인한다.
+2. 대시보드 헤더의 `휴가 입력`을 연다.
+3. 기본 신청서를 접수한다.
+4. 실행 상세에서 잔여 휴가와 부대 일정, AI 검토 요약을 확인한다.
+5. 승인하면 모의 인트라넷 등록 ID와 등록자가 표시되는지 확인한다.
+6. 다른 신청을 반려하고 인트라넷 등록이 생성되지 않는지 확인한다.
+7. 행정병 기본 에이전트에서 주간 외출·외박 현황 보고를 실행한다.
+
+## 분기와 오류 검증
+
+### 필터 미달
+
+신뢰도 또는 탐지 개체 수를 워크플로우 기준보다 낮게 전송한다. 실행은 `COMPLETED`로 끝나되 승인 요청과 지역 보고서를 만들지 않아야 한다.
+
+### 분석관 반려
+
+분석관 승인 단계에서 반려한다. 실행은 `REJECTED`가 되고 지역 보고서, 보고 이벤트와 참모 실행을 만들지 않아야 한다.
+
+### 참모 반려
+
+참모 승인 단계에서 반려한다. 기존 지역 보고서는 유지하되 지휘관 보고서와 지휘관 알림은 만들지 않아야 한다.
+
+### 수정만 하고 승인하지 않음
+
+초안 편집을 연 뒤 승인하지 않고 닫는다. 실행은 계속 승인 대기여야 한다. 현재 편집 중인 미제출 내용은 서버에 저장되지 않는다.
+
+### 중복 승인
+
+이미 처리된 승인 요청을 다시 제출하면 `409` 오류가 발생해야 한다. 실행당 보고서 또는 인트라넷 등록은 하나만 남아야 한다.
+
+### 모델 오류
+
+API 키를 제거하거나 허용되지 않은 모델을 선택해 실패를 유도한다. 워크플로우는 `FAILED`, ReAct 실행은 오류 이벤트로 끝나며 승인 초안이나 최종 보고서를 만들지 않아야 한다. 현재 자동 재시도는 없다.
+
+### 역할 오류
+
+다른 역할로 승인 API를 호출하면 `403`이어야 한다. 다만 전체 조회 권한은 운영 수준으로 완성되지 않았으므로 이 데모를 완전한 보안 검증으로 해석하지 않는다.
+
+## 인수 기준
+
+| ID | 조건 | 통과 기준 |
 | --- | --- | --- |
-| 0:00–1:00 | Login as 파주지역 Analyst; open 파주 감시·위협분석 Workflow | Role-filtered Dashboard, Analyst palette, editable template |
-| 1:00–3:00 | Show node composition; edit event confidence/prompt, Apply, Save, Validate and Publish | Saved/published definition reflects the edit; role, model and version visible |
-| 3:00–4:30 | 센서 입력에서 규모/신뢰도를 조절해 전송; 실행 상세 열기 | 감시 센서 → 조건 확인 → 작전 정보 → 실제 LLM 위협 분석 순서가 trace에 표시 |
-| 4:30–6:00 | Inspect MEDIUM/HIGH alert and approval drawer; edit one report sentence and explicitly approve | Draft pauses at WAITING_FOR_ANALYST_APPROVAL; then same execution resumes with edited content |
-| 6:00–7:00 | Inspect approved 파주시 report; switch header to Staff | Report persisted, event dispatched, exactly one linked Staff run starts automatically |
-| 7:00–9:00 | Open Staff Builder/execution and inspect source reports | New A report + seeded B/C reports → collection/classification → context/search → Situation Synthesis → Commander draft |
-| 9:00–10:00 | Inspect WAITING_FOR_STAFF_APPROVAL and approve | Staff decision resumes same run; final COMMANDER report persisted; no recursive Staff trigger |
-| 10:00–11:00 | 지휘관으로 전환하고 보고서 도착 알림 클릭 | 지도·센서 이벤트·도착 알림이 보이고, 알림에서 최종 보고서와 승인자·원본 실행을 확인 |
+| AC-01 | 네 역할로 로그인·전환 | 역할별 메뉴, 지역과 기본 화면이 올바르다. |
+| AC-02 | 새 워크플로우 생성 | 현재 역할·지역의 `DRAFT`가 만들어지고 빌더로 이동한다. |
+| AC-03 | 그래프 저장·검증·게시 | 정의가 유지되고 유효한 그래프만 새 버전으로 게시된다. |
+| AC-04 | 게시 후 정의 수정 | 기존 게시 버전은 유지되고 현재 행은 `DRAFT`가 된다. |
+| AC-05 | 분석관 센서 실행 | 입력값이 고정 스냅샷 실행과 모델 분석에 반영된다. |
+| AC-06 | 필터 미달 | 승인·보고서 없이 종료한다. |
+| AC-07 | 분석관 승인 대기 | 명시적 결정 전에는 지역 보고서를 만들지 않는다. |
+| AC-08 | 분석관 수정 승인 | 수정 내용, 승인자와 시각이 지역 보고서에 저장된다. |
+| AC-09 | 지역 보고서 발행 | 참모 실행이 정확히 한 건 연결된다. |
+| AC-10 | 참모 승인 대기 | 지역 보고를 종합한 초안이 승인 전까지 노출 범위를 벗어나지 않는다. |
+| AC-11 | 참모 승인 | 지휘관 보고서와 도착 알림이 생성된다. |
+| AC-12 | 어느 승인 단계든 반려 | 후속 보고서 또는 등록 없이 `REJECTED`가 된다. |
+| AC-13 | 행정병 휴가 승인 | 같은 실행이 재개되고 모의 인트라넷 등록이 한 건 생성된다. |
+| AC-14 | 행정병 휴가 반려 | 등록 없이 `REJECTED`가 된다. |
+| AC-15 | 실행 상세 새로고침 | DB의 실행, trace, 승인과 보고서 상태를 다시 표시한다. |
+| AC-16 | 지휘관 상황판 | 지도, 내장 기본 챗봇, 종합 판단과 보고 알림을 표시하고 원시 센서는 숨긴다. |
+| AC-17 | 지휘관 챗 세션 목록 | 최근 질문 대신 `YYYY.MM.DD 시작`과 턴 수를 표시한다. |
+| AC-18 | 기본 에이전트 목록 | 각 역할에 `GENERAL DEFAULT`, `MISSION DEFAULT`가 하나씩 있다. |
+| AC-19 | 커스텀 에이전트 저장 | 역할에 허용된 연동과 그 연동에서 파생된 도구만 저장된다. |
+| AC-20 | 에이전트 실행 | 판단·도구 결과·답변이 NDJSON으로 순차 표시되고 최종 결과가 저장된다. |
+| AC-21 | 도구 선택 | 필요하지 않은 도구를 강제로 실행하지 않고 간단한 후속 질문은 도구 없이 답할 수 있다. |
+| AC-22 | 세션 컨텍스트 | 같은 세션 최근 완료 3턴만 참조하고 새 세션은 빈 컨텍스트로 시작한다. |
+| AC-23 | 세션 삭제 | 세션과 연결 실행·이벤트가 제거된다. |
+| AC-24 | 새로고침 | 저장된 로그인 세션을 복원하지 않고 역할 선택 화면으로 돌아간다. |
+| AC-25 | 입력 화면 접근 | 센서·휴가 입력은 해당 역할의 대시보드 헤더에서만 노출된다. |
 
-Before the main flow, demonstrate creation in under one minute: choose `새 Workflow`, enter a name and area, select Blank, add the supported trigger/data/AI/approval/report nodes, connect their handles, save, validate and publish v1. Start a test from v1 and show that the execution detail uses the same pinned graph. Keep the seeded Workflow available as a recovery path for the live seminar.
+## 검증 기록
 
-Each AI node produces its role-specific draft before approval. After each approval, the publication Action persists the approved content and Situation Board reflects persisted records. Publication means in-app delivery. Execution view provides cross-links from the regional report to the Staff run and from the Commander report to its source reports.
+발표 전 다음 식별자를 기록하면 문제를 재현하기 쉽다.
 
-## Branches to verify before presenting
+- 센서 이벤트 ID와 분석관 실행 ID
+- 지역 보고서 ID
+- 연결된 참모 실행 ID
+- 지휘관 보고서 ID
+- 분석관·참모 승인 ID와 결정
+- 에이전트 채팅 세션 ID와 실행 ID
+- 사용한 모델 모드와 모델 ID
 
-1. **낮은 규모 입력:** LLM이 반환한 위협 수준과 근거를 그대로 표시하며 임의로 HIGH로 바꾸지 않는다.
-2. **Filtered event:** Wrong area or confidence below 0.8 finishes with a filtered reason before AI analysis; no downstream report.
-3. **Analyst Reject:** Pause, reject → REJECTED; audit decision preserved; no new regional report, event or Staff execution.
-4. **Staff Reject:** Existing approved regional inputs remain unchanged; Staff run → REJECTED; no Commander report.
-5. **Edit without approve:** Edit or close drawer, refresh → execution still waiting; no final report. Approve edited draft → exact edited content survives persistence.
-6. **Refresh/restart:** Refresh browser and restart backend while waiting at each approval gate; recover same execution/thread and pending draft; decision resumes once without rerunning the prior LLM analysis.
-7. **Duplicate/recovery:** Repeat approval submission/event dispatch, including recovery after a stored decision or report commit → no duplicate decision, final report or Staff run. Conflicting/stale decisions are rejected clearly.
-8. **Provider error:** Timeout/invalid structured output → visible FAILED step after bounded retries, with no auto-approval, fake success or downstream report.
-9. **Role switch:** Switch away during approval → original execution context stays fixed; wrong role cannot approve or fetch restricted drafts. Switch back → pending review remains available.
-
-## Explicit acceptance criteria
-
-| ID | Given / When | Pass condition |
-| --- | --- | --- |
-| AC-01 | Login/switch through all four roles | Correct workflow/node/data scope; Commander read-only; 행정병은 인사행정 범위; no production login infrastructure |
-| AC-02 | 지원 노드, edge와 설정을 변경하고 저장·새로고침 | 그래프와 설정이 유지되고 실행에 반영된다. 잘못된 endpoint, 단일 시작점 위반, 승인·발행 노드 누락은 검증에서 실패한다. |
-| AC-02A | Create a blank role-compatible Workflow | A new DRAFT is persisted, opens in Builder, survives refresh, and exposes only role-compatible nodes |
-| AC-02B | Connect, validate and publish the new Workflow | An immutable version snapshot is created; Registry shows it and the published graph can start a real LangGraph execution |
-| AC-03 | Publish then edit an Workflow while a run is paused | Registry shows version/owner/trigger; paused run retains original snapshot |
-| AC-04 | Start the main Analyst fixture in actual-demo mode | External Gateway call produces validated output; mocked inputs are labeled; real node trace updates in Builder and Execution |
-| AC-05 | Analyst run reaches Human Approval | Durable WAITING_FOR_ANALYST_APPROVAL; no regional final report/event before explicit approval |
-| AC-06 | Edit and approve Analyst draft | Same thread resumes; exact edited content, actor and timestamp are persisted in the approved REGIONAL report |
-| AC-07 | Commit the new regional report | Exactly one report event starts exactly one active Staff execution; source report ID matches persisted 파주시 output |
-| AC-08 | Staff synthesis executes | New 파주시 and approved 연천군/철원군 fixture IDs are recorded as inputs; draft shows synthesis/evidence and pauses at WAITING_FOR_STAFF_APPROVAL |
-| AC-09 | 참모가 승인 | 같은 참모 thread가 재개되고 COMMANDER 보고서와 도착 알림이 한 건 생성된다. 지휘관은 알림을 클릭해 보고서를 연다. |
-| AC-10 | Reject at either approval gate | Run ends REJECTED; no corresponding final report/downstream action; decision trace remains |
-| AC-11 | LOW/filtered fixture runs | Clearly recorded outcome, no accidental approval/report/Staff launch |
-| AC-12 | Refresh/restart during either pending review | Same checkpoint/draft recover, same execution resumes; no duplicated pre-approval model call or publishing |
-| AC-13 | Duplicate decision/event or crash-window recovery | Unique report and Staff execution invariants hold; stale/conflicting reviews fail visibly |
-| AC-14 | Switch roles with dirty graph or waiting review | Save/Discard/Cancel protects edits; role scope refetches; original runtime actor unchanged; backend rejects wrong-role review |
-| AC-15 | 지휘관 상황판에서 최종 보고 확인 | 지휘관에게 대시보드·상황판 중복 메뉴가 없고 상황판 단일 메뉴에서 지도, 최신 참모 종합 판단과 보고서 도착 알림을 확인한다. 원시 센서 이벤트는 표시하지 않으며 지역 상태는 최신 종합보고가 참조한 지역 보고를 따른다. |
-| AC-16 | Fail the external provider | Clear failed trace with bounded retry; no fabricated output, report or auto-approval |
-| AC-17 | 에이전트 빌더에서 도구·모델·프롬프트·반복 제한을 변경하고 게시 | 설정이 저장되고 레지스트리에서 게시 상태와 연결 도구 수를 확인한다. |
-| AC-18 | 기본 ReAct 에이전트에 파주시 조사 요청 입력 | 실제 모델이 다음 행동을 선택하고 DB 조회, 보고서 검색, 지역 정보, 근거 종합의 판단 요약과 관찰이 순차 스트리밍된다. |
-| AC-19 | ReAct 에이전트가 최종 브리핑 생성 | 응답 청크가 스트리밍되고 실행이 COMPLETED가 되며 최종 내용이 저장된다. 실행 전 입력 중인 프롬프트는 대화 기록에 미리 표시되지 않는다. |
-| AC-20 | 채팅 세션 컨텍스트 관리 | 같은 세션의 후속 요청은 최근 완료 3턴을 참조하고, 새 세션은 빈 컨텍스트로 시작한다. 세션 선택 시 기록이 복원되며 삭제 시 해당 실행과 이벤트도 제거된다. |
-| AC-21 | 요청별 ReAct 도구 선택 | 단순 후속 요약은 도구 없이 완료할 수 있고, 센서 조회 요청은 작전 DB만 선택할 수 있다. 전체 브리핑 요청은 모델 판단에 따라 필요한 복수 도구를 선택하며 런타임이 미사용 도구를 강제로 실행하지 않는다. |
-| AC-22 | 행정병이 정기 휴가 신청을 접수 | 잔여 휴가와 관련 부대 일정이 조회되고 AI 요약 후 WAITING_FOR_ADMIN_APPROVAL에서 중단된다. |
-| AC-23 | 행정병이 휴가 신청 승인·반려 | 승인 시 같은 LangGraph 실행이 재개되어 모의 인트라넷 등록이 한 건 생성된다. 반려 시 등록 없이 REJECTED로 종료된다. |
-| AC-24 | 행정병 ReAct 에이전트에 주간 외출·외박 보고 요청 | 행정 전용 도구만 사용해 현황·일정·규정을 조회하고 주간 보고서를 NDJSON으로 스트리밍한다. |
-| AC-25 | 에이전트 빌더에서 데이터·외부 시스템 카탈로그 필터 및 연결 변경 | 현재 역할의 연동만 표시되고 선택한 connector가 정의에 저장된다. 실행 시 해당 connector가 제공하는 도구만 모델에 노출된다. |
-| AC-26 | 워크플로우 빌더에서 연동 출처 확인 | 역할별 최소 노드 수는 유지되며 팔레트와 선택 노드 설정에 연결 데이터·외부 시스템 이름과 MOCK 상태가 표시된다. |
-| AC-27 | 참모 레지스트리의 범용 기본 에이전트에서 주간 위협 비교 추천 질문 실행 | `GENERAL DEFAULT` 에이전트가 현재 참모 권한의 연동 전체를 사용하고, 추천 질문에 따라 최근 관측, 지난주 승인 보고 기준과 근거 종합 도구를 선택한다. 결과에는 이번 주·지난주 비교 수치와 근거 식별자가 포함된다. |
-| AC-28 | 네 역할의 에이전트 레지스트리 진입 | 각 역할에 `GENERAL DEFAULT`와 `MISSION DEFAULT`가 하나씩 표시된다. 범용형은 역할 전체 연동을, 임무 특화형은 목적별 도구만 사용하며 지휘관의 두 에이전트에는 외부 상태를 변경하는 도구가 노출되지 않는다. |
-| AC-29 | 역할별 임무 특화 추천 질문 실행 | 분석관은 징후 상관분석, 참모는 대응 우선순위, 지휘관은 대응방안 비교, 행정병은 근무편성 충돌 점검 결과를 각 전용 도구의 근거와 함께 생성한다. |
-| AC-30 | 프론트엔드 최초 진입 또는 새로고침 | 브라우저 저장 세션을 자동 복원하지 않고 사용자 역할 선택 화면을 먼저 표시한다. |
-| AC-31 | 비지휘관 대시보드 진입 | 역할별 워크플로우와 ReAct 에이전트를 함께 표시하며 각 레지스트리와 실행 화면으로 이동할 수 있다. 지휘관 상황판에는 지휘관 기본 에이전트가 표시된다. |
-| AC-32 | 분석관·행정병 역할별 입력 진입 | 분석관은 `센서 입력`, 행정병은 `휴가 입력`을 좌측 메뉴나 강조 배너 없이 대시보드 헤더의 보조 버튼 하나로만 볼 수 있다. 다른 역할의 입력 경로에 직접 접근하면 대시보드로 돌아간다. |
-
-## Verification evidence and completion
-
-During implementation, record pass/fail plus execution/report IDs for the main flow and both approval decisions, and concise results for the branch checks. Automate the persistence/idempotency and role-review invariants where practical; manually rehearse the visual Builder sequence on the presentation screen. Report gaps explicitly. This documentation change alone does not pass runtime acceptance.
+문서가 최신이라고 해서 인수 기준이 자동으로 통과하는 것은 아니다. 실제 실행 결과와 화면을 별도로 확인해야 한다.
