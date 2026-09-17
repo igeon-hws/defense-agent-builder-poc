@@ -1,57 +1,45 @@
-# Agent Builder Demo - Coding Instructions
+# Defense Agent Builder Demo 개발 지침
 
-Before making implementation decisions, read:
+이 프로젝트는 세미나용 데모다. 운영 환경 수준의 범용성보다 시연 안정성, 이해하기 쉬운 UI와 코드 흐름을 우선한다.
 
-1. docs/PRD.md
-2. docs/ARCHITECTURE.md
-3. docs/UI_SPEC.md
-4. docs/DEMO_SCENARIO.md
+## 작업 전 확인
 
-This project is a 1-week seminar demo.
-Optimize for demo reliability and clarity, not production completeness.
+구현 결정을 내리기 전에 다음 문서를 함께 읽는다.
 
-## Priority
+1. `docs/PRD.md`: 범위와 사용자 요구사항
+2. `docs/ARCHITECTURE.md`: 런타임과 데이터 계약
+3. `docs/UI_SPEC.md`: 화면과 상호작용
+4. `docs/DEMO_SCENARIO.md`: 검증 기준
 
-1. Agent Builder UX
-2. Workflow execution visualization
-3. Human-in-the-Loop
-4. Role-based experience
-5. Analyst → Staff workflow linkage
+사용자의 명시적인 최신 요청이 문서보다 우선한다. 동작하는 기존 기능과 사용자 변경사항을 먼저 확인하고 수정한다.
 
-## Do not over-engineer
+## 기술과 구조
 
-Do NOT implement unless explicitly requested:
+- Frontend: React, TypeScript, React Flow
+- Backend: FastAPI, LangGraph, SQLite
+- 실제 데모 LLM 호출은 백엔드 `ModelGateway`를 통한다.
+- `main.py`는 앱 생성과 라우터 등록만 담당한다.
+- HTTP 처리는 `*_api.py`, 실행 규칙은 `*_service.py`, 공통 기능은 `core.py`와 `database.py`에 둔다.
+- 자격 증명은 `.env`와 백엔드에서만 관리한다.
 
-- Real Data Fabric
-- Real sensor integration
-- Kafka / message broker
-- Kubernetes
-- Full RBAC / ABAC
-- GIS
-- Local model serving
-- Production authentication
 
-Use mocks where specified in the docs.
+## 데모 범위
 
-## Important
+별도 요청이 없으면 실제 센서, Data Fabric, MCP 서버, Kafka, Kubernetes, 운영 인증, 전체 RBAC/ABAC, 고급 GIS와 로컬 모델 서빙을 구현하지 않는다. 문서에서 mock으로 정한 데이터와 외부 시스템은 mock임을 명확히 표시한다.
 
-When requirements are ambiguous:
-- Prefer the simplest implementation that satisfies the demo scenario.
-- Do not introduce new infrastructure without a clear requirement.
-- Preserve the architecture described in docs/ARCHITECTURE.md.
+## 구현 원칙
 
-## Implementation contract
+- 현재 데모 시나리오를 만족하는 가장 단순한 구현을 선택한다.
+- 새 인프라나 추상화 계층을 필요 이상으로 추가하지 않는다.
+- API 경로와 저장 형식을 변경할 때 프론트엔드 사용처와 기존 DB 마이그레이션을 함께 확인한다.
+- JSON DB 필드는 API 응답 전에 공통 `row()` 함수로 역직렬화한다.
+- 내부 chain-of-thought를 노출하지 않고 공개 가능한 판단 요약과 도구 결과만 표시한다.
+- 범위나 동작이 바뀌면 관련 문서도 같은 작업에서 갱신한다.
 
-- Read all four documents above before implementation, including when continuing existing work. PRD defines scope; ARCHITECTURE defines runtime contracts; UI_SPEC defines layouts/interactions; DEMO_SCENARIO defines acceptance. Planning source and retrieval dates are recorded in PRD.
-- Keep the existing README and useful repository documentation. Inspect the current implementation and user changes before editing. Do not replace working features just to match a suggested folder or endpoint name.
-- Use React + TypeScript + React Flow for the frontend and FastAPI + LangGraph + SQLite for the backend/runtime.
-- Use an external LLM for the actual demo through a Model Gateway/provider interface. Store provider and model ID separately; keep credentials on the backend. Future local providers are an extension point, not a serving task.
-- Mock Login/Role Session supports Analyst, Staff and Commander. Apply simple role/area rules to exposed nodes, agents, data and approval actions; Commander is read-only. Role Switch must not rewrite a running execution's initiating context.
-- Mock Sensor, Data Fabric and Situation Context. Keep notifications in-app and Situation Board limited to sector cards, events and approved reports.
-- Builder changes must compile into actual execution. Keep business-capability JSON definitions separate from LangGraph internals and pin a definition snapshot/version for each run.
-- Implement HITL with real interrupt/checkpoint/resume. Edit requires explicit approval; Reject terminates without publishing. Never bypass approval because of a provider failure or demo timing.
-- Persist the approved regional report before its event triggers the Staff Agent. Keep report writes and event dispatch idempotent; Commander reports must not recursively trigger Staff runs.
-- Preserve the distinction between Agent publication and per-execution approval. Use the minimal draft/publish lifecycle; no separate deployment approval engine is required.
-- Prioritize demo reliability throughout, then Builder UX, execution visibility, HITL, role experience and Analyst-to-Staff linkage. Prefer the simplest implementation satisfying the documented demo over new infrastructure.
-- Validate meaningful behavior using DEMO_SCENARIO acceptance criteria, especially both approval gates, edit/reject, checkpoint recovery, role checks and duplicate report/event handling. Label deterministic test mode; do not present it as a live external-model result.
-- Keep these documents consistent when an explicitly requested scope decision changes. Report changed files, checks performed and remaining limitations; do not claim untested acceptance criteria passed.
+## 검증
+
+- 변경한 Python 모듈의 구문과 FastAPI import를 확인한다.
+- 프론트 변경 시 TypeScript 검사와 Vite 빌드를 실행한다.
+- 관련 API의 응답 형식과 역할 제한을 확인한다.
+- 실행·승인 변경은 `docs/DEMO_SCENARIO.md`의 해당 흐름으로 검증한다.
+- 실제 외부 모델 결과와 결정론적 테스트 결과를 구분해 보고한다.

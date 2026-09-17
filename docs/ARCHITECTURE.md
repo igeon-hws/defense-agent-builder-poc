@@ -1,4 +1,4 @@
-# Agent Builder Demo — Architecture
+# Workflow Builder Demo — Architecture
 
 Scope and planning provenance: [PRD.md](PRD.md). Interaction requirements: [UI_SPEC.md](UI_SPEC.md). Verification: [DEMO_SCENARIO.md](DEMO_SCENARIO.md).
 
@@ -16,25 +16,39 @@ React / TypeScript / React Flow
 
 Use one backend process and SQLite. Separate modules and interfaces, not deployable services. Builder JSON stays independent of LangGraph classes. AI nodes call the Gateway, never vendor SDKs directly. A simple in-process event dispatcher backed by persisted pending events is sufficient; no Kafka, worker fleet or message broker.
 
-## Agent Definition and compilation
+백엔드 모듈은 책임별로 나눈다. `main.py`는 FastAPI 앱 생성, CORS와 라우터 등록만 담당한다. `core.py`는 환경 설정, SQLite 연결, 공통 ID·시간 함수와 mock 세션 정책을 제공하고, `database.py`는 스키마 초기화·마이그레이션·fixture 생성을 담당한다. `schemas.py`에는 공통 HTTP 입력 모델을 둔다. `workflow_api.py`는 워크플로우·실행·승인·보고서 HTTP API를, `workflow_service.py`는 기본 정의, LangGraph 실행과 상태 전이를 담당한다. `view_api.py`는 상태·모델·대시보드·알림·상황판 조회 API를 제공한다. `react_agent.py`는 ReAct 에이전트·채팅 세션 API와 NDJSON 실행 스트림을, `react_tools.py`는 도구 카탈로그와 도구별 실행 구현을 담당한다. `runtime.py`는 LangGraph 그래프 컴파일과 체크포인트를, `gateway.py`는 외부 모델 호출과 결정론적 테스트 제공자를 담당한다. 모든 모듈은 같은 프로세스와 SQLite 연결 팩토리를 공유한다.
 
-Save JSON containing schema_version, agent_id, workflow_id, name, description, owner, allowed_roles, required_permissions, monitoring_area, trigger, approval_policy, output_type, model, nodes and edges. Model contains separate provider and model_id plus generation settings. A node contains id, type, config and position. Edges contain source, target and an optional named condition branch. Store business node types, not executable Python or vendor-specific objects.
+ReAct 에이전트는 워크플로우 정의와 분리된 `react_agents` 정의를 사용한다. 정의에는 모델, 시스템 프롬프트, 최대 반복 횟수, 선택한 connector ID와 파생된 허용 도구 ID를 저장한다. `connectors.py`가 역할별 데이터·외부 시스템, mock 여부, capability와 접근 유형을 정의한다. 저장과 실행 시 서버가 connector 선택으로 허용 도구를 다시 계산하므로 클라이언트가 임의 도구 ID를 추가할 수 없다. connector 필드가 없는 기존 정의는 저장된 도구 ID로 자동 보완한다. `react_chat_sessions`가 사용자별 대화 경계를 저장하고 `react_agent_runs`와 `react_agent_events`가 요청, 단계별 공개 이벤트와 최종 결과를 저장한다. 실행 API는 NDJSON으로 요청 접수, 판단 요약, 도구 관찰, 응답 청크와 완료 이벤트를 순서대로 스트리밍한다. 같은 세션의 최근 완료 3턴을 `conversation_context`로 모델에 전달하며 세션 간에는 컨텍스트를 공유하지 않는다. 에이전트 실행의 HITL은 첫 구현에서 제외한다.
 
-Agent versions carry version, lifecycle_status and the full definition. Minimal lifecycle: DRAFT → PUBLISHED → SUSPENDED. Publish validates and snapshots a draft; Test uses a saved snapshot, even if unpublished. Registry registration is achieved by persistence and publishing; do not build a second formal review workflow. Agent deployment approval and an execution's Human Approval are different concepts. The former is deferred; the latter is mandatory.
+각 역할에는 범용형과 임무 특화형, 두 개의 시스템 기본 에이전트가 있다. 범용형은 요청 시점의 역할 정책에서 허용 연동 전체를 다시 계산하고, 임무 특화형은 역할 권한 안에서 목적에 필요한 connector만 고정 구성한다. 두 유형 모두 삭제·편집할 수 없고 각 목적에 맞는 `suggested_prompts`를 제공한다. 사용자가 만든 커스텀 에이전트만 connector 선택과 모델·프롬프트 편집을 허용한다.
 
-Validator checks required configuration, unique IDs, valid endpoints, one supported trigger, supported node types, reachable outputs, no unsupported cycles, named LOW/MEDIUM/HIGH routing, role-compatible nodes, and a required role-specific Human Approval on every route to Send Report. Reject bypasses around approval. Compiler maps only the supported nodes to LangGraph. Canvas-only position changes do not affect execution; config and edge edits do.
+모델은 매 반복에서 다음 도구 또는 FINAL을 구조화 출력으로 선택한다. 런타임은 연결된 모든 도구의 실행이나 순서를 강제하지 않고 모델의 선택을 그대로 실행한다. 현재 요청과 최근 대화만으로 답할 수 있으면 첫 반복에도 FINAL이 가능하다. 런타임은 허용 목록, 5~8회 반복 제한, 동일 도구 중복 호출 방지와 근거 종합의 최소 입력 계약만 검증한다. 기본 도구는 작전 DB 조회, 승인 보고서 검색, 지역 정보 조회와 근거 종합이며 현재 모두 로컬 SQLite 또는 mock 어댑터다. 실제 MCP transport는 아직 연결하지 않으며 이후 같은 도구 인터페이스에 어댑터로 추가한다.
 
-Published sensor/report subscriptions use active versions. Each execution pins its version/snapshot so later edits cannot change a running or paused graph. For this demo choose one active Analyst subscription for A-12 and one active Staff report subscription; avoid accidental fan-out to multiple template versions.
+## Workflow Definition and compilation
+
+Workflow Definition JSON은 schema_version, 설명, 모델 설정, 노드와 edge를 저장한다. 노드는 id, type, label, group, config, position을 가지며 edge는 source와 target을 가진다. 실행 가능한 Python 코드나 API credential은 Definition에 저장하지 않는다.
+
+역할별 workflow node catalog 응답은 대응하는 connector의 ID, 이름, 분류와 mode를 함께 반환한다. 기본 정의의 노드 config에도 `connector_id`를 저장해 어떤 연동을 사용하는지 추적한다. 워크플로우 런타임은 기존 capability adapter를 실행하며, 이 단계에서는 사용자 임의 endpoint나 credential 등록을 허용하지 않는다.
+
+Workflow versions carry version, lifecycle_status and the full definition. Minimal lifecycle: DRAFT → PUBLISHED → SUSPENDED. Publish validates and snapshots a draft; Test uses a saved snapshot, even if unpublished. Registry registration is achieved by persistence and publishing; do not build a second formal review workflow. Workflow deployment approval and an execution's Human Approval are different concepts. The former is deferred; the latter is mandatory.
+
+`POST /api/agents` creates a new DRAFT with an empty canvas and role-compatible metadata. Template selection is optional and copies business JSON only. `agent_versions` stores every published snapshot under `(agent_id, version)`; publication never overwrites a previous row. Executions reference the exact saved snapshot and version used at start.
+
+현재 Validator는 빈 그래프, 노드 ID 중복, 잘못된 edge endpoint, 단일 시작점, 승인·발행 노드 존재 여부와 시작점에서 해당 노드까지의 도달 가능성을 검사한다. 역할별 노드 노출과 워크플로우 소유권은 API에서 제한한다. 노드별 Input/Output 호환성을 따라가는 정적 데이터 흐름 검증과 일반적인 cycle 검출은 아직 구현되지 않았다. 캔버스 위치 변경은 실행에 영향을 주지 않고 config와 edge 변경은 실행에 반영된다.
+
+The compiler performs a topological walk of Builder edges, creates one LangGraph node for every reachable business node, maps conditional edge labels to routing functions, and compiles with the shared SQLite checkpointer. Capability functions receive and return typed workflow state. The API must not emulate waiting by stopping a Python loop; the checkpoint and pending interrupt are the source of truth.
+
+Published sensor/report subscriptions use active versions. Each execution pins its version/snapshot so later edits cannot change a running or paused graph. For this demo choose one active Analyst subscription for 경기도 파주시 and one active Staff report subscription; avoid accidental fan-out to multiple template versions.
 
 ## Supported capability contracts
 
 | Group | Nodes and behavior |
 | --- | --- |
 | Trigger | Sensor Event (Analyst); Approved Report (Staff). User Request is a visible future item, disabled in this demo. Test Run injects a fixture into the supported trigger. |
-| Data | Data Fabric Search/Query and Situation Context return deterministic mocked records with stable evidence IDs; Approved Reports returns persisted, approved regional reports only. |
-| AI | Threat Analysis and Situation Synthesis use structured Gateway output with evidence references; Report Generator formats a draft from that output (may use the same Gateway if needed). |
-| Control | Event Filter checks area/confidence; Condition branches on threat; Human Approval interrupts for the assigned role. |
-| Action | Record Event handles LOW/filtered cases; Notification creates an in-app alert; Send Report finalizes/persists approved content; Update Situation Board derives visible results from persisted state. |
+| Data | 작전 정보 조회는 고정 근거 ID가 있는 모의 기록을 반환한다. 승인 지역보고 수집은 승인·저장된 지역 보고만 반환한다. |
+| AI | Threat Analysis and Situation Synthesis use structured Gateway output with evidence references and create the role-specific approval draft. |
+| Control | Event Filter checks area/confidence; Human Approval interrupts for the assigned role. |
+| Action | Report publication persists approved content and emits the appropriate in-app report event. Situation Board reads persisted results. |
 
 Report collection and classification can share the Approved Reports node. Correlation and overall assessment belong to Situation Synthesis; do not require separate nodes for every conceptual step.
 
@@ -69,26 +83,39 @@ Minimum logical records (tables can be simplified while retaining these invarian
 | report_events | Event ID, regional report ID, type APPROVED_REPORT_CREATED, pending/dispatched status |
 | execution_trace / audit | Ordered node transitions and review/report events with correlation IDs |
 | sensor_events | Simulator payload and processing outcome |
+| react_agents / react_chat_sessions / react_agent_runs | ReAct 설정, 소유자, 사용자별 채팅 세션, 사용자 목표와 최종 상태 |
+| react_agent_events | 공개 가능한 판단·도구 관찰 스트림과 최종 브리핑 완료 이벤트 |
+| leave_requests / intranet_registrations | 휴가 신청 원문, 잔여 일수·부대 일정 요약, 승인 상태와 모의 인트라넷 등록 결과 |
+| personnel_movements | 주간 외출·외박 현황 보고용 가상 인사행정 기록 |
 
 Only approved content enters the reports collection; drafts live in runtime/approval state. Send Report commits a REGIONAL report and its pending event in one SQLite transaction. The dispatcher reads the committed report and creates the Staff execution with a uniqueness constraint on (event_id, target_agent_id, target_version). Mark dispatched only after execution creation succeeds; recover pending items on startup. Duplicate notification delivery therefore cannot create a second Staff run. Use a unique finalized report key per execution/output to guard replay.
 
-A COMMANDER report is persisted after Staff approval but must not emit APPROVED_REPORT_CREATED, preventing recursive Staff triggering. B-07 and C-03 are preapproved external seed fixtures; seeding them does not emit runtime events. Staff collects the new A-12 report plus those fixtures from a bounded demo set, deduplicated by report ID, and records the exact input IDs. A fresh A-12 report must actually participate in synthesis.
+A COMMANDER report is persisted after Staff approval but must not emit APPROVED_REPORT_CREATED, preventing recursive Staff triggering. 경기도 연천군 and 강원특별자치도 철원군 are preapproved external seed fixtures; seeding them does not emit runtime events. Staff collects the new 경기도 파주시 report plus those fixtures from a bounded demo set, deduplicated by report ID, and records the exact input IDs. A fresh 파주시 report must actually participate in synthesis.
 
 ## Model Gateway
 
-Expose generate(messages, model_config) and structured_generate(messages, schema, model_config). Implement one real external provider. Reserve provider registration as the extension point for vLLM/Ollama/local HF without installing or serving them now. Keep external API credentials in backend environment configuration, never Agent Definition JSON or frontend storage.
+기본 실행 모드는 `openai`이며 백엔드의 `OPENAI_API_KEY`로 Responses API를 호출한다. 기본 모델은 `gpt-4.1-mini`이고 `OPENAI_MODEL`, `OPENAI_BASE_URL`로 교체할 수 있다. 위협 분석과 상황 종합은 `text.format.type=json_schema` 구조화 출력을 사용한다. `DEMO_MODEL_MODE=deterministic`은 키 없이 UI를 점검하는 명시적 리허설 모드이며 화면과 health 응답에 표시한다.
 
-Validate structured output. Threat analysis requires threat_level LOW/MEDIUM/HIGH, summary and evidence_ids; synthesis requires overall_threat_level, summary, priority_areas and source_report_ids. Evidence references must resolve to supplied data. Sensor confidence is distinct from model certainty. Use a bounded timeout and at most one automatic retry for transient provider failures; malformed output or exhausted retries fails visibly without fabricated approval or report. Deterministic test/rehearsal output must be labeled as such.
+Expose generate(messages, model_config) and structured_generate(messages, schema, model_config). Implement one real external provider. Reserve provider registration as the extension point for vLLM/Ollama/local HF without installing or serving them now. Keep external API credentials in backend environment configuration, never Workflow Definition JSON or frontend storage.
+
+구조화 출력을 검증한다. 위협 분석 출력은 threat_level, summary, evidence_ids, draft를 포함하고 상황 종합 출력은 overall_threat_level, summary, priority_areas, source_report_ids, draft를 포함한다. Sensor confidence는 모델 판단과 별개의 입력이다. 호출 실패나 잘못된 출력은 승인·보고서를 만들지 않고 실행 실패로 표시한다. 리허설 출력은 deterministic 모드로 명시한다.
 
 ## Minimal API boundaries (implementation defaults)
 
 | API responsibility | Suggested endpoints / contract |
 | --- | --- |
 | Mock session | POST /api/session, role switch via same operation; return static session context |
-| Catalog and definitions | GET /api/nodes; GET/POST /api/agents; GET/PUT /api/agents/{id}; POST .../validate and .../publish |
+| Catalog and definitions | GET /api/nodes, GET /api/models; GET/POST/DELETE /api/agents; GET/PUT /api/agents/{id}; POST .../validate and .../publish |
 | Start/test | POST /api/agents/{id}/test with fixture and saved snapshot; POST /api/sensor-events for active published subscription |
 | Execution | GET /api/executions and /api/executions/{id}; GET .../trace |
 | Approval | POST /api/approvals/{id}/decision with APPROVE, EDIT_APPROVE or REJECT and optional edited content/comment |
-| Read models | GET /api/reports, /api/reports/{id}, /api/situation-board, /api/notifications |
+| Read models | GET /api/reports, /api/situation-board, /api/dashboard |
+| Personnel administration | POST/GET /api/leave-requests; 승인 후 execution detail에서 intranet_registration 확인 |
 
 Backend applies the same small role/area policy to reads, node validation and approval actions as the frontend. Return clear validation, forbidden-role, conflict/stale-decision and provider error messages. This is demo policy, not a production RBAC/ABAC system. Send to Superior/Commander means in-app report availability, not email or an external system integration.
+
+## 행정병 실행 경로
+
+`정기 휴가 신청 접수 → 잔여 휴가 조회 → 부대 일정 조회 → 휴가 신청 요약 생성 → 행정병 HITL → 부대 인트라넷 등록`을 세 번째 LangGraph 템플릿으로 제공한다. 승인 전에는 인트라넷 등록 행을 만들지 않는다. 승인 후 `leave_requests.status=REGISTERED`와 `intranet_registrations`를 함께 저장하며, 현재 인트라넷은 명시적인 mock 시스템이다.
+
+범용 기본 에이전트에는 역할이 허용하는 전체 도구를 노출한다. 임무 특화형은 분석관의 징후 상관분석, 참모의 대응 우선순위, 지휘관의 지휘결심 검토, 행정병의 근무편성 점검에 필요한 도구만 노출한다. 지휘관 도구는 승인 정보·대응태세 조회와 방안 비교만 허용하고 외부 상태를 변경하지 않는다. 역할별 카탈로그와 서버 실행 시점의 허용 목록 검사를 함께 적용한다.

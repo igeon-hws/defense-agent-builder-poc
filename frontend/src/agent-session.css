@@ -1,0 +1,90 @@
+.agentChatLayout {
+  grid-template-columns: 205px minmax(500px, 1.35fr) minmax(320px, .65fr);
+  gap: 14px;
+}
+
+.chatSessions {
+  padding: 13px;
+  overflow: auto;
+}
+
+.chatSessions > .newChat {
+  width: 100%;
+  justify-content: center;
+}
+
+.chatSessions > small {
+  display: block;
+  margin: 10px 2px;
+  color: #64748b;
+  font-size: 9px;
+}
+
+.chatSessions > div {
+  display: grid;
+  gap: 6px;
+}
+
+.chatSessions > div > article {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: #fff;
+  border: 1px solid #dce3eb;
+  color: #475569;
+}
+
+.chatSessions > div > article.active {
+  border-color: #0b8793;
+  background: #edf9fa;
+  color: #087f8c;
+}
+
+.chatSessions article > button:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  padding: 10px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.chatSessions .removeChat {
+  width: 27px;
+  height: 27px;
+  margin-right: 4px;
+  padding: 6px;
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.chatSessions .removeChat:hover {
+  color: #b52e3e;
+}
+
+.chatSessions b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.chatSessions span {
+  flex: none;
+  font-size: 8px;
+  color: #64748b;
+}
+
+@media (max-width: 1200px) {
+  .agentChatLayout {
+    grid-template-columns: 180px minmax(430px, 1fr) 300px;
+  }
+}

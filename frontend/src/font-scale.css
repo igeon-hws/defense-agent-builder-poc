@@ -1,0 +1,52 @@
+/* Presentation readability: raise text three pixels without scaling the layout. */
+body { font-size: 17px; }
+.headRight div:not(.avatar) { font-size: 14px; }
+.scope small { font-size: 13px; }
+.scope b { font-size: 14px; }
+.app nav a { font-size: 16px; }
+.primary, .secondary, .danger, .run { font-size: 15px; }
+.pageHead h1 { font-size: 29px; }
+.pageHead > div:first-child > span,
+.builderHead > div > span,
+.drawerHead span { font-size: 13px; }
+.panelTitle h2 { font-size: 17px; }
+.metric small, .muted { font-size: 13px; }
+.agentCard h3 { font-size: 18px; }
+.agentCard p { font-size: 14px; }
+.notification b, .runRow b, .role b { font-size: 15px; }
+.notification p { font-size: 13px; }
+.notification small, .runRow small, td small, .role small { font-size: 12px; }
+.badge { font-size: 12px; }
+table { font-size: 15px; }
+th { font-size: 12px; }
+.builderHead h1 { font-size: 19px; }
+.palette h3, .config h3 { font-size: 13px; }
+.palette > div > small, .palette > div > em { font-size: 11px; }
+.palette button, .flowNode b { font-size: 13px; }
+.flowNode small { font-size: 10px; }
+.config label, .info, .canvasLabel { font-size: 12px; }
+.testBar small, .timelineItem small, .timelineItem em { font-size: 11px; }
+.testBar b, .timelineItem p, .traceStep b { font-size: 12px; }
+.timelineItem b { font-size: 14px; }
+.drawerBody h3, .evidence span { font-size: 13px; }
+.drawerBody > p, .draft { font-size: 15px; }
+.loginCard > p, .createModal > p { font-size: 14px; }
+.role small, .security { font-size: 12px; }
+.reportCard h3 { font-size: 16px; }
+.reportCard p { font-size: 13px; }
+.reactPalette h3, .reactSettings h3 { font-size: 14px; }
+.reactPalette > p, .reactSettings label, .agentIntro p { font-size: 13px; }
+.reactPalette button b, .reactResource b, .reactCore b, .reactGoal b { font-size: 14px; }
+.reactPalette button small, .reactResource small, .reactCore small, .reactGoal small { font-size: 11px; }
+.connectorCard em, .connectorBadges i, .systemDefault { font-size: 10px; }
+.chatContext small, .chatEmpty p, .suggestedPrompts button { font-size: 13px; }
+.chatBubble p { font-size: 15px; }
+.agentEvent b { font-size: 14px; }
+.agentEvent p, .traceNotice { font-size: 12px; }
+.chatSessions > small, .chatSessions span { font-size: 12px; }
+.chatSessions b { font-size: 13px; }
+.sensorForm > label, .manualStep p { font-size: 15px; }
+.scaleHint p, .createModal label, .manualNodes > .panelTitle + div span { font-size: 14px; }
+.feedItem b { font-size: 15px; }
+.feedItem p, .reportArrival > span, .staffBriefing > p { font-size: 13px; }
+.feedItem small, .staffBriefingMeta span, .staffBriefingMeta b { font-size: 11px; }
