@@ -1,94 +1,201 @@
-# Workflow Builder Demo — Product Requirements
+# 워크플로우·에이전트 빌더 제품 요구사항
 
-## Source and authority
+## 문서 목적
 
-Planning source: [세미나 준비안](https://www.notion.so/3d5a13906bdf812ebfb8d6a5a3a0c967), fetched 2026-09-09; reported last edit 2026-09-08T08:36:53.650Z. UI companion: [UI 상세 - GPT](https://www.notion.so/3d5a13906bdf80a79249f84d8c37d367), reported last edit 2026-09-08T08:15:54.848Z.
+이 문서는 세미나용 국방 AI 데모의 제품 범위와 사용자 경험을 정의한다. 구현 구조는 [아키텍처](ARCHITECTURE.md), 화면 세부사항은 [UI 명세](UI_SPEC.md), 검증 절차는 [데모 시나리오](DEMO_SCENARIO.md), 실제 구현 여부는 [현재 구현 상태](IMPLEMENTATION_STATUS.md)를 기준으로 판단한다.
 
-These documents translate the retrieved planning pages and the user's explicit scope into implementable requirements. Explicit user decisions take precedence over broader platform aspirations in Notion. Routes, persistence contracts, seed fixtures and lifecycle simplifications below are implementation defaults, not verbatim source requirements. PRD owns scope, ARCHITECTURE owns runtime contracts, UI_SPEC owns interactions, and DEMO_SCENARIO owns acceptance. Read all four together.
+초기 기획 자료는 다음 두 문서다.
 
-## Goal and constraints
+- [세미나 준비안](https://www.notion.so/3d5a13906bdf812ebfb8d6a5a3a0c967)
+- [UI 상세](https://www.notion.so/3d5a13906bdf80a79249f84d8c37d367)
 
-Build a **1-week seminar demo** for a roughly 40-minute presentation, with about 11 minutes for the live demo. Show that users can compose role-specific workflows in one shared Workflow Builder, run them, review AI output, and connect workflows through approved reports.
+이 저장소에서는 이후의 명시적인 사용자 요구와 현재 데모 범위를 우선한다.
 
-The visual focus is the Workflow Builder and the separate ReAct Agent experience, not the Situation Board. Editable builders remain role-scoped; every role receives a general and a mission-specific system default agent in its registry. Workflows execute declared edges; agents select among role-authorized tools to achieve a user goal.
+## 목표
 
-Required stack: React + TypeScript + React Flow frontend; FastAPI + LangGraph + SQLite backend/runtime. Actual demo reasoning uses an external LLM through a Model Gateway/provider abstraction. Future local models require a provider implementation, not a workflow redesign; local serving is out of scope.
+약 40분 분량의 세미나에서 다음 내용을 짧은 실습으로 보여준다.
 
-## Users and role experience
+1. 역할에 따라 사용할 수 있는 워크플로우와 데이터가 달라진다.
+2. 사용자가 React Flow 기반 빌더에서 업무 흐름을 구성한다.
+3. 저장된 흐름이 실제 LangGraph 실행과 승인 중단·재개로 이어진다.
+4. 승인된 지역 보고가 참모 워크플로우와 지휘관 상황판으로 연결된다.
+5. 정해진 순서의 워크플로우와 목표 중심 ReAct 에이전트의 차이를 함께 보여준다.
 
-| Role | Available experience | Review responsibility |
+이 프로젝트는 교육용 데모이며 운영 지휘체계, 실제 군사 데이터 처리 체계 또는 운영 인증 제품이 아니다.
+
+## 사용자와 권한
+
+| 역할 | 업무 범위 | 승인 책임 |
 | --- | --- | --- |
-| 분석관 | 경기도 파주시 센서 이벤트, 위협 분석, 본인 워크플로우와 지역 보고서 | 지역 보고서 승인 |
-| 정보·작전 참모 | 승인된 지역 보고 수집, 다지역 위협 종합, 본인 워크플로우 | 지휘관 보고서 승인 |
-| 지휘관 | 지도, 참모 종합 판단, 보고서 도착 알림과 최종 보고서 | 빌더 편집·승인 권한 없음 |
+| 파주지역 분석관 | 파주시 센서 이벤트 분석, 지역 보고서 작성, 본인 워크플로우·에이전트 관리 | 지역 보고서 승인 |
+| 정보·작전 참모 | 승인 지역보고 수집, 접경지역 종합 판단, 본인 워크플로우·에이전트 관리 | 지휘관 보고서 승인 |
+| 지휘관 | 지도와 최종 보고 열람, 기본 에이전트를 통한 상황 질의 | 승인 기능 없음 |
+| 행정병 | 휴가 신청 검토, 인사행정 데이터 조회, 본인 워크플로우·에이전트 관리 | 휴가 신청 승인 |
 
-Provide Mock Login and a persistent header Role Switch. Session fields: user_id, role, area, permissions. Role and area determine visible workflows, nodes, data and review actions through a small static policy. This demonstrates role experience; it is not production authentication or a full authorization engine.
+로그인은 비밀번호 없이 네 역할 중 하나를 고르는 모의 로그인으로 제공한다. 세션에는 사용자 ID, 역할, 지역과 권한 목록이 포함된다. 상단 역할 선택으로 언제든 역할을 바꿀 수 있지만, 기존 실행의 시작 역할과 승인 기록은 바뀌지 않는다.
 
-Workflow Registry는 현재 세션의 사용자 ID를 기준으로 소유 워크플로우만 표시한다. 분석관과 참모는 자신의 워크플로우를 생성·편집·게시·삭제할 수 있으며 기본 제공 워크플로우는 삭제할 수 없다. 지휘관은 Builder와 Registry에 접근하지 않고 승인된 지휘관 보고서만 열람한다. 역할 선택과 권한 설명은 사용자 화면에서 한국어로 표시한다.
+## 공통 제품 범위
 
-모든 역할이 접근할 수 있는 사용 매뉴얼 화면을 제공한다. 매뉴얼은 역할별 권한, 접근 가능한 메뉴, 사용할 수 있는 노드, 워크플로우 생성부터 센서 실행·승인·보고서 확인까지의 순서를 설명한다.
+### 워크플로우
 
-## Required behavior
+- 분석관·참모·행정병은 본인 역할의 워크플로우만 생성·편집·게시·삭제한다.
+- 기본 제공 워크플로우는 삭제할 수 없다.
+- 새 워크플로우 생성 시 이름, 설명, 빈 캔버스 또는 역할 기본 템플릿을 선택한다.
+- 역할과 지역은 현재 로그인 세션에서 자동으로 정하며 생성 창에서 별도로 바꾸지 않는다.
+- 워크플로우 정의는 노드, 연결, 위치, 설정과 모델 정보를 JSON으로 저장한다.
+- 게시할 때 번호가 붙은 불변 스냅샷을 저장한다.
+- 실행은 시작 시점 정의와 버전을 고정하므로 이후 편집의 영향을 받지 않는다.
+- 현재 생명주기는 `DRAFT`와 `PUBLISHED`만 지원한다.
 
-데모의 1차 진입점은 좌측 메뉴 최하단의 **센서 입력** 화면이다. 분석관은 파주시 감시 센서의 탐지 개체 수(1~12)와 신뢰도(0.50~0.99)를 조절한 뒤 이벤트를 전송한다. 전송값은 게시된 분석 워크플로우의 실제 LangGraph 실행과 외부 LLM 분석 입력으로 전달되어야 한다.
+### 실행과 승인
 
-노드 팔레트는 역할별 핵심 6개 노드만 제공한다. AI 노드가 판단 결과와 승인용 보고서 초안을 함께 생성한다. Action은 계산이나 문서 작성이 아니라 승인 이후 애플리케이션 상태를 변경하는 단계다. 분석관은 `감시 센서 이벤트 → 이벤트 조건 확인 → 작전 정보 조회 → 위협 분석·초안 생성 → 분석관 검토·승인 → 지역 보고서 발행`, 참모는 `승인 지역보고 접수 → 승인 지역보고 수집 → 접경지역 위협 종합·초안 생성 → 참모 검토·승인 → 지휘관 보고서 발행` 흐름을 사용한다.
+- 저장된 정의를 LangGraph `StateGraph`로 컴파일한다.
+- 분석관, 참모, 행정병 워크플로우는 각각 전용 승인 노드에서 중단한다.
+- 승인, 수정 승인, 반려를 지원한다.
+- 승인 전에는 최종 보고서나 인트라넷 등록을 만들지 않는다.
+- 실행 상세에서 고정된 그래프, 노드 상태, 입력·출력 요약과 승인 내용을 확인한다.
+- 실행 상태와 체크포인트는 SQLite에 저장한다.
 
-1. Create a new role-specific Workflow from the Dashboard or Workflow Registry. The creation form requires name, role, monitoring area and description, then opens a blank Builder canvas.
-2. Compose workflows by adding, connecting, configuring and removing business-capability nodes on React Flow. Include Analyst and Staff templates as optional starting points; graph edits and edge topology must affect validated LangGraph runtime behavior.
-3. Save Workflow Definitions as drafts, validate them, test a saved draft snapshot, and publish an immutable version to the Workflow Registry. Show owner, role, trigger, capabilities and version. Editing a published Workflow creates or updates its draft without modifying published versions.
-4. Compile the selected saved or published definition into a real LangGraph `StateGraph`. Accept an adjustable sensor event, filter area/confidence, retrieve mocked context/data, call the configured Model Gateway, create a report draft and pause for Analyst HITL.
-5. Pause with LangGraph `interrupt()` and a SQLite-backed checkpointer. Approve resumes the same thread with `Command(resume=...)`; Edit changes the draft and requires explicit approval; Reject ends without publishing a report. Persist the review decision and final edited content.
-5. Persist the approved regional report before emitting its Approved Report event. This event starts the published Staff Workflow, which combines it with seeded approved B/C reports and mocked context, performs synthesis, drafts a Commander report, and pauses for Staff HITL.
-6. 참모 승인 후에만 지휘관 보고서를 저장하고 지휘관에게 도착 알림을 생성한다. 지휘관은 알림을 클릭해 보고서를 열며, 보고서는 원본 실행과 승인자 정보를 유지한다.
-7. Show actual node execution status, input/output summaries, timing, errors and approvals inside Builder and in a dedicated Execution view. Refresh must recover waiting executions from backend state.
-8. Situation Board shows an OpenStreetMap base map for 경기도 파주시, 경기도 연천군 and 강원특별자치도 철원군 together with approved reports. 지휘관 화면은 원시 센서 이벤트 대신 최신 참모 종합보고의 위협 수준, 핵심 판단, 참조 지역과 보고 시각을 표시한다. Notifications stay inside the application.
+### ReAct 에이전트
 
-## ReAct 에이전트 첫 구현
+- 워크플로우와 별도로 에이전트 빌더, 레지스트리와 채팅을 제공한다.
+- 각 역할에 범용형과 임무 특화형 시스템 기본 에이전트를 하나씩 제공한다.
+- 기본 에이전트는 편집·삭제할 수 없다.
+- 분석관·참모·행정병은 커스텀 에이전트를 만들고 역할에 허용된 연동을 선택할 수 있다.
+- 지휘관은 기본 에이전트만 사용한다.
+- 에이전트는 연결 도구를 고정 순서로 모두 실행하지 않고, 요청에 필요한 다음 행동을 모델이 선택한다.
+- 실행 과정에는 비공개 사고 과정 대신 공개 가능한 판단 요약과 도구 관찰만 표시한다.
 
-워크플로우와 별도로 에이전트 빌더와 에이전트 레지스트리를 제공한다. 분석관·참모·지휘관·행정병에게 범용형과 임무 특화형 시스템 기본 에이전트를 각각 제공한다. 범용형은 현재 역할에 허용된 연동 전체를, 임무 특화형은 목적에 필요한 연동만 적용한다. 기본 에이전트는 삭제·편집할 수 없으며 에이전트별 대표 유스케이스는 채팅의 추천 질문으로 제공한다. 사용자가 만드는 커스텀 에이전트는 역할별 **연동 카탈로그**에서 데이터와 외부 시스템을 선택하고, 선택한 연동이 제공하는 기능 도구만 허용한다. 카탈로그에는 연동 이름, 설명, `DATA`/`SYSTEM`, `MOCK`/`LIVE`, `READ`/`SEARCH`/`WRITE`와 승인 필요 여부를 표시한다.
+## 역할별 워크플로우 요구사항
 
-분석관 기본 에이전트의 추천 질문에는 “파주시 최근 이상 징후를 조사하고 지휘관 브리핑을 작성해줘”를 포함한다. ReAct 런타임은 모델에게 매 반복의 다음 행동을 선택하게 하고, 선택된 작전 DB 조회·기존 보고서 검색·지역 정보 조회·근거 종합 결과를 다시 관찰로 제공한다. 연결된 도구 전체나 고정 순서를 강제하지 않으며, 현재 요청과 대화 컨텍스트만으로 답할 수 있으면 도구 호출 없이 완료할 수 있다. 런타임은 허용 목록, 중복 호출과 종합 도구의 최소 입력 계약만 검증한다. 화면은 비공개 chain-of-thought가 아니라 공개 가능한 판단 요약, 선택한 도구, 관찰 결과와 최종 응답 청크를 스트리밍하고 분석 완료 상태로 종료한다. 에이전트 HITL은 후속 범위다.
+### 분석관 흐름
 
-정보·작전 참모 범용 에이전트에는 “이번 주 위협 수준이 지난주보다 높아졌는지 근거와 함께 설명해줘.”를 추천 질문으로 제공한다. 임무 특화 기본 에이전트는 분석관의 다중 징후 상관분석, 참모의 대응 우선순위 산정, 지휘관의 읽기 전용 대응방안 비교, 행정병의 근무편성 충돌 점검과 원본을 변경하지 않는 조정 초안을 지원한다.
+```text
+감시 센서 이벤트
+→ 이벤트 조건 확인
+→ 작전 정보 조회
+→ 위협 분석·초안 생성
+→ 분석관 검토·승인
+→ 지역 보고서 발행
+```
 
-에이전트 채팅은 사용자별·에이전트별 세션으로 저장한다. 같은 세션의 후속 요청에는 최근 완료 대화 3턴만 모델 컨텍스트로 전달하고, 새 대화에서는 이전 컨텍스트를 사용하지 않는다. 사용자는 세션을 선택해 대화를 복원하거나 새로 만들고 삭제할 수 있다.
+분석관은 대시보드 헤더의 `센서 입력` 버튼으로 데모 입력기를 연다. 센서 ID와 지역은 파주시로 고정하며 이벤트 종류, 탐지 개체 수 1~12개, 신뢰도 0.50~0.99를 입력한다. 게시된 파주시 분석 워크플로우가 없으면 실행하지 않는다.
 
-첫 구현의 외부 시스템은 SQLite 데이터와 명시적으로 표시된 mock 어댑터다. 실제 MCP 서버 연결, 임의 도구 등록, 장기 메모리와 다중 에이전트 협업은 후속 범위다.
+필터의 기본 기준은 신뢰도 0.8, 탐지 개체 수 2개다. 기준을 통과하면 작전 맥락을 조회하고 외부 모델이 위협 수준, 요약, 근거 ID와 승인용 초안을 구조화 출력으로 생성한다.
 
-워크플로우 빌더는 기존의 역할별 최소 노드 수를 유지한다. 대신 팔레트와 노드 설정에서 각 노드가 사용하는 데이터 또는 외부 시스템과 mock 상태를 보여준다. 분석관·참모는 작전 관측 데이터, 승인 보고서 저장소, 지역 상황 정보와 지휘 보고 체계를 사용하고, 행정병은 인사행정 데이터, 부대 일정·규정과 부대 인트라넷을 사용한다. 지휘관은 연동을 편집하지 않는다.
+### 참모 흐름
 
-## Scope boundaries
+```text
+승인 지역보고 접수
+→ 승인 지역보고 수집
+→ 접경지역 작전상황 조회
+→ 위협 종합·초안 생성
+→ 참모 검토·승인
+→ 지휘관 보고서 발행
+```
 
-| Treatment | Components |
+분석관이 지역 보고서를 승인하면 참모 워크플로우를 자동으로 시작한다. 참모는 새 파주시 보고와 연천군·철원군 초기 보고를 바탕으로 종합 초안을 검토한다. 승인된 지휘관 보고서는 지휘관 상황판과 알림에 나타난다.
+
+### 행정병 흐름
+
+```text
+정기 휴가 신청 접수
+→ 잔여 휴가 조회
+→ 부대 일정 조회
+→ 휴가 신청 요약 생성
+→ 행정병 검토·승인
+→ 부대 인트라넷 등록
+```
+
+행정병은 대시보드 헤더의 `휴가 입력` 버튼으로 신청서를 연다. 군번, 성명, 소속, 휴가 종류, 기간과 신청 일수를 입력한다. 승인하면 모의 부대 인트라넷 등록을 한 건 만들고, 반려하면 등록하지 않는다.
+
+## 지휘관 경험
+
+지휘관의 `/dashboard`는 상황판으로 사용한다. 별도 대시보드와 상황판 메뉴를 중복 제공하지 않는다.
+
+상황판은 다음 순서로 구성한다.
+
+1. 파주·연천·철원 COP 지도와 지역별 승인 상태
+2. 지도 아래에서 바로 사용하는 지휘관 `GENERAL DEFAULT` 챗봇
+3. 최신 참모 종합 판단
+4. 최종 보고서 도착 알림
+
+지휘관에게 원시 센서 이벤트, 미승인 초안과 워크플로우 편집 기능을 보여주지 않는다. 보고서 알림을 누르면 읽음 처리하고 승인자, 승인 시각과 원본 실행을 확인할 수 있는 읽기 전용 상세를 연다. 참조 지역 수는 종합 판단 카드에서 보여준다.
+
+좌측 `기본 에이전트` 메뉴에서는 지휘관의 범용형과 지휘결심 검토 에이전트를 각각 실행할 수 있다. 상황판 하단의 별도 카드형 에이전트 레지스트리는 제공하지 않는다.
+
+## 에이전트 세부 요구사항
+
+### 기본 에이전트
+
+| 역할 | 범용형 | 임무 특화형 |
+| --- | --- | --- |
+| 분석관 | 역할 전체 작전 연동을 이용한 조사 | 다중 징후 상관분석 |
+| 참모 | 접경지역 자료 비교·종합 | 대응 우선순위 산정 |
+| 지휘관 | 승인 보고와 지역 상황 브리핑 | 대응방안과 가용태세 비교 |
+| 행정병 | 인사행정 질의와 주간 현황 보고 | 근무편성 충돌 점검·조정 초안 |
+
+각 기본 에이전트는 대표 추천 질문을 제공한다. 시스템 기본 정의는 서버 시작 시 정책 정의로 갱신하며 항상 게시 상태를 유지한다.
+
+### 커스텀 에이전트
+
+커스텀 에이전트는 다음 항목을 편집한다.
+
+- 이름과 설명
+- 역할에 허용된 데이터·외부 시스템 연동
+- 모델
+- 시스템 프롬프트
+- 최대 반복 횟수 5~8회
+
+연동을 하나 이상 선택해야 저장할 수 있다. 선택된 연동이 제공하는 도구만 런타임에 노출한다. 워크플로우 전용 인트라넷 등록 기능은 ReAct 도구로 노출하지 않는다.
+
+### 채팅 세션
+
+- 사용자·에이전트별로 세션을 분리한다.
+- 같은 세션의 최근 완료 3턴만 다음 요청의 컨텍스트로 전달한다.
+- 새 세션은 이전 대화를 참조하지 않는다.
+- 세션 목록은 시작일과 완료 턴 수를 짧게 표시한다.
+- 세션을 삭제하면 그 세션의 실행과 이벤트도 삭제한다.
+- 실행 중에는 중복 제출, 세션 전환과 삭제를 막는다.
+
+## 데이터와 연동
+
+현재 모든 업무 데이터와 외부 시스템은 실제 운영 시스템이 아니라 SQLite 또는 명시된 `MOCK` 어댑터다.
+
+| 구분 | 예시 |
 | --- | --- |
-| Implement | Workflow Builder/Registry, ReAct Agent Builder/Registry/Chat, external LLM + Gateway, LangGraph workflow runtime, agent step and result streaming, workflow HITL, report persistence/event linkage, trace |
-| Mock | Login/permission data, Sensor Simulator, Data Fabric Search/Query, Situation Context, external regional report fixtures |
-| Minimal | Static role filtering, in-app notifications, report viewer, Situation Board, Commander read-only view, audit history |
-| Excluded unless explicitly requested | Kafka/message broker, Kubernetes, advanced military GIS layers, real Data Fabric, real sensors, production auth, full RBAC/ABAC, local-model serving |
+| 작전 데이터 | 센서 관측, 승인 보고서, 지역 상황, 징후 패턴, 대응태세 |
+| 작전 기능 | 근거 종합, 지휘결심 지원 |
+| 인사 데이터 | 외출·외박 현황, 부대 일정, 인사 규정 |
+| 인사 기능 | 주간 현황 보고, 근무편성 점검, 모의 인트라넷 등록 |
 
-행정병용 병역관리·인사행정 데모를 포함한다. 실제 MCP 연동, 별도 마이크로서비스, 임의 코드 노드와 복잡한 Workflow 배포 승인은 후속 범위다.
+실제 MCP 서버, 실제 센서, 실제 부대 시스템 자격 증명과 임의 도구 등록은 범위에서 제외한다.
 
-## 행정병 유즈케이스
+## 모델 요구사항
 
-- `ADMIN` 데모 사용자는 본인 소유 워크플로우·ReAct 에이전트와 인사행정 데이터만 사용한다.
-- 정기 휴가 신청이 들어오면 잔여 휴가와 신청 기간의 부대 일정을 조회하고 LLM이 승인용 요약을 작성한다.
-- LangGraph HITL에서 행정병이 승인하면 모의 부대 인트라넷 등록을 생성하고, 반려하면 등록하지 않는다.
-- “이번 주차 외출/외박 현황 보고 작성해줘” 요청은 인사행정 DB, 부대 일정과 관련 규정을 필요한 순서로 조회해 주간 보고서를 스트리밍한다.
-- 군번·성명 등 개인정보는 데모용 가상 데이터이며 처리 목적에 필요한 범위로만 표시한다.
+- 기본 공급자는 OpenAI Responses API다.
+- 위협 분석, 상황 종합과 휴가 요약은 JSON 스키마 기반 구조화 출력을 사용한다.
+- 에이전트의 다음 행동 선택도 구조화 출력으로 받는다.
+- 모델과 API 키는 백엔드 환경 변수로 관리한다.
+- `DEMO_MODEL_MODE=deterministic`은 외부 키 없이 화면 흐름을 점검하는 리허설 모드다.
+- 모델 호출 실패나 잘못된 출력은 성공으로 가장하지 않고 실행을 실패 처리한다.
 
-## Delivery order (five working days)
+## 범위 구분
 
-| Day | Reviewable outcome |
+| 구분 | 포함 내용 |
 | --- | --- |
-| 1 | App shell, Mock Login/Role Switch, static role policy, seeded data and Builder layout |
-| 2 | Editable templates, node configuration, save/validation, Registry/published snapshots |
-| 3 | FastAPI/LangGraph execution, external Model Gateway, trace, persisted interrupt/resume |
-| 4 | Analyst and Staff approvals, Approved Report event linkage, report viewer and board |
-| 5 | End-to-end acceptance, reject/edit/retry checks, restart recovery, rehearsal and fixes |
+| 구현 | 워크플로우 빌더·레지스트리, 에이전트 빌더·레지스트리·채팅, LangGraph 실행, 승인 중단·재개, 보고서 연결, 지휘관 상황판 |
+| 모의 구현 | 로그인, 센서 입력, 작전·인사 데이터, 지역 상황, 외부 시스템, 인트라넷 등록 |
+| 최소 구현 | 역할 필터, 앱 내 알림, 보고서 상세, 실행 추적, OpenStreetMap 상황판 |
+| 제외 | 운영 인증, 완전한 RBAC·ABAC, 실제 MCP·센서·군 시스템, 메시지 브로커, 마이크로서비스, 고급 군사 GIS, 로컬 모델 서빙 |
 
-Prefer a narrow supported graph grammar over general-purpose orchestration. Use polling unless a stronger transport is demonstrably needed. No exact model ID or vendor is prescribed; choose one configured external provider with structured output and keep credentials on the backend. A labeled deterministic test provider is allowed for automated checks/rehearsal, but cannot count as the actual external-LLM demo.
+## 완료 조건
 
-## Done
-
-All acceptance criteria in [DEMO_SCENARIO.md](DEMO_SCENARIO.md) pass. Builder changes reach execution, both approval gates stop publication, edits survive resume, rejected reports do not trigger downstream work, and the completed Commander report links to its approved regional inputs. Report tested behavior and remaining limitations honestly; do not count a visual-only animation as runtime integration.
+- 세 역할의 워크플로우가 저장된 그래프에 따라 실행된다.
+- 분석관·참모·행정병 승인 전에는 외부 상태가 바뀌지 않는다.
+- 수정 승인 내용이 최종 보고서 또는 인트라넷 등록에 보존된다.
+- 분석관 보고 승인으로 참모 실행이 한 건 시작된다.
+- 참모 보고 승인으로 지휘관 보고와 알림이 생성된다.
+- 지휘관이 지도와 내장 기본 에이전트, 종합 판단과 최종 보고를 한 화면에서 사용한다.
+- 역할별 기본 에이전트와 커스텀 에이전트가 허용된 도구만 실행한다.
+- 남은 제한사항은 [현재 구현 상태](IMPLEMENTATION_STATUS.md)에 사실대로 기록한다.
